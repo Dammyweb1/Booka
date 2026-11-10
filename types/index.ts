@@ -27,6 +27,7 @@ export interface Business {
 export interface Appointment {
   id: string
   businessId: string
+  serviceId?: string
   clientName: string
   clientPhone?: string
   serviceName: string

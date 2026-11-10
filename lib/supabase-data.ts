@@ -68,6 +68,7 @@ export async function loadBusinessWorkspace(userId: string): Promise<BusinessWor
   const appointments = (appointmentsResult.data ?? []).map((row) => ({
     id: row.id,
     businessId: row.business_id,
+    serviceId: row.service_id,
     clientName: row.client_name,
     clientPhone: row.client_phone,
     serviceName: row.service_name,
@@ -183,11 +184,16 @@ export async function deleteService(id: string, businessId: string) {
 
 export async function saveAppointments(appointments: Appointment[], businessId: string) {
   if (appointments.length === 0) return
+  if (appointments.some((appointment) => !appointment.serviceId)) {
+    throw new Error('Cannot save an appointment without its service ID. Refresh the workspace and try again.')
+  }
+
   const supabase = createSupabaseClient()
   const { error } = await supabase.from('appointments').upsert(
     appointments.map((appointment) => ({
       id: appointment.id,
       business_id: businessId,
+      service_id: appointment.serviceId,
       client_name: appointment.clientName,
       client_phone: appointment.clientPhone ?? '',
       service_name: appointment.serviceName,
