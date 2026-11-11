@@ -179,7 +179,7 @@ export default function OnboardingPage() {
             <span className="hidden sm:inline">Step {step} of 3</span>
             <span className="hidden text-xs sm:inline">·</span>
             <span>
-              Already have an account?{' '}
+              <span className="hidden sm:inline">Already have an account?{' '}</span>
               <Link href="/login" className="font-semibold text-[#1e1c1a] hover:underline">
                 Log in
               </Link>
