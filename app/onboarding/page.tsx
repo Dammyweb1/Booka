@@ -94,6 +94,7 @@ export default function OnboardingPage() {
             phone: businessData.phone.trim(),
             address: businessData.address.trim(),
             selected_services: selectedServices,
+            logo_url: businessData.logoUrl,
           },
         },
       })
