@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import gsap from 'gsap'
@@ -183,11 +184,48 @@ export default function DashboardPage() {
   const [shareCopied, setShareCopied] = useState(false)
   const [bookingUrl, setBookingUrl] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const dropdownTriggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownMenuRef = useRef<HTMLDivElement>(null)
+  const [actionDropdownPosition, setActionDropdownPosition] = useState<{ top: number; right: number } | null>(null)
   const aptFilterRef = useRef<HTMLDivElement>(null)
   const shareRef = useRef<HTMLDivElement>(null)
   const notificationsRef = useRef<HTMLDivElement>(null)
   const mobileMenuBackdropRef = useRef<HTMLButtonElement>(null)
   const mobileMenuPanelRef = useRef<HTMLElement>(null)
+
+  const updateActionDropdownPosition = () => {
+    const trigger = dropdownTriggerRef.current
+    if (!trigger) return
+
+    const rect = trigger.getBoundingClientRect()
+    const menuWidth = 160
+    const right = Math.min(
+      Math.max(8, window.innerWidth - rect.right),
+      Math.max(8, window.innerWidth - menuWidth - 8)
+    )
+    const menuHeight = dropdownMenuRef.current?.offsetHeight ?? 176
+    const top =
+      rect.bottom + menuHeight + 8 <= window.innerHeight - 8
+        ? rect.bottom + 8
+        : Math.max(8, rect.top - menuHeight - 8)
+
+    setActionDropdownPosition({ top, right })
+  }
+
+  useLayoutEffect(() => {
+    if (!openActionDropdownId) {
+      setActionDropdownPosition(null)
+      return
+    }
+
+    updateActionDropdownPosition()
+    window.addEventListener('resize', updateActionDropdownPosition)
+    window.addEventListener('scroll', updateActionDropdownPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateActionDropdownPosition)
+      window.removeEventListener('scroll', updateActionDropdownPosition, true)
+    }
+  }, [openActionDropdownId])
 
   useLayoutEffect(() => {
     if (!mobileMenuOpen || !mobileMenuPanelRef.current || !mobileMenuBackdropRef.current) return
@@ -245,7 +283,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target) &&
+        !dropdownMenuRef.current?.contains(target)
+      ) {
         setOpenActionDropdownId(null)
       }
       if (aptFilterRef.current && !aptFilterRef.current.contains(event.target as Node)) {
@@ -1267,6 +1310,7 @@ export default function DashboardPage() {
                             {/* THREE-DOT ACTIONS TRIGGER WITH REQUESTED 4 OPTIONS */}
                             <div className="inline-block text-left" ref={openActionDropdownId === apt.id ? dropdownRef : undefined}>
                               <button
+                                ref={openActionDropdownId === apt.id ? dropdownTriggerRef : undefined}
                                 type="button"
                                 onClick={() =>
                                   setOpenActionDropdownId(openActionDropdownId === apt.id ? null : apt.id)
@@ -1277,45 +1321,57 @@ export default function DashboardPage() {
                                 <MoreVertical size={16} />
                               </button>
 
-                              {openActionDropdownId === apt.id && (
-                                <div className="absolute right-0 top-10 z-40 w-40 rounded-2xl border border-[#e5ddd4] bg-white p-1.5 shadow-xl">
-                                  {/* 1. Mark Paid */}
-                                  <button
-                                    type="button"
-                                    onClick={() => updateAppointmentStatus(apt.id, 'Paid')}
-                                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#528361] hover:bg-[#e7f2ea] transition"
+                              {openActionDropdownId === apt.id &&
+                                actionDropdownPosition &&
+                                typeof document !== 'undefined' &&
+                                createPortal(
+                                  <div
+                                    ref={dropdownMenuRef}
+                                    style={{
+                                      position: 'fixed',
+                                      top: actionDropdownPosition.top,
+                                      right: actionDropdownPosition.right,
+                                    }}
+                                    className="z-[1000] w-40 rounded-2xl border border-[#e5ddd4] bg-white p-1.5 shadow-xl"
                                   >
-                                    <CheckCircle2 size={14} /> Mark Paid
-                                  </button>
+                                    {/* 1. Mark Paid */}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAppointmentStatus(apt.id, 'Paid')}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#528361] hover:bg-[#e7f2ea] transition"
+                                    >
+                                      <CheckCircle2 size={14} /> Mark Paid
+                                    </button>
 
-                                  {/* 2. Archived */}
-                                  <button
-                                    type="button"
-                                    onClick={() => updateAppointmentStatus(apt.id, 'Archived')}
-                                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#756f69] hover:bg-[#f1ece5] transition"
-                                  >
-                                    <Archive size={14} /> Archived
-                                  </button>
+                                    {/* 2. Archived */}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAppointmentStatus(apt.id, 'Archived')}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#756f69] hover:bg-[#f1ece5] transition"
+                                    >
+                                      <Archive size={14} /> Archived
+                                    </button>
 
-                                  {/* 3. Pending */}
-                                  <button
-                                    type="button"
-                                    onClick={() => updateAppointmentStatus(apt.id, 'Pending')}
-                                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#a47328] hover:bg-[#fff0d7] transition"
-                                  >
-                                    <Clock size={14} /> Pending
-                                  </button>
+                                    {/* 3. Pending */}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAppointmentStatus(apt.id, 'Pending')}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#a47328] hover:bg-[#fff0d7] transition"
+                                    >
+                                      <Clock size={14} /> Pending
+                                    </button>
 
-                                  {/* 4. Reject */}
-                                  <button
-                                    type="button"
-                                    onClick={() => updateAppointmentStatus(apt.id, 'Rejected')}
-                                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#d46b4f] hover:bg-[#ffe7df] transition"
-                                  >
-                                    <Ban size={14} /> Reject
-                                  </button>
-                                </div>
-                              )}
+                                    {/* 4. Reject */}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateAppointmentStatus(apt.id, 'Rejected')}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-[#d46b4f] hover:bg-[#ffe7df] transition"
+                                    >
+                                      <Ban size={14} /> Reject
+                                    </button>
+                                  </div>,
+                                  document.body
+                                )}
                             </div>
                           </td>
                         </tr>
