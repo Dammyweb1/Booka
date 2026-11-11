@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 
 export function TypewriterHeading() {
-  const words = ['focus.', 'growth.', 'your craft.']
+  const words = ['focus.', 'growth.', 'craft.']
   const [wordIndex, setWordIndex] = useState(0)
   const [currentText, setCurrentText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
