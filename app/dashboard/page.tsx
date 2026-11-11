@@ -765,7 +765,7 @@ export default function DashboardPage() {
               </button>
 
               {shareOpen && (
-                <div className="absolute right-0 top-12 z-30 max-h-[calc(100dvh-6rem)] w-[calc(100vw-2rem)] max-w-96 overflow-y-auto rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-4 text-[#1e1c1a] shadow-2xl sm:p-5">
+                <div className="absolute right-0 top-12 z-30 max-h-[calc(100dvh-6rem)] w-full max-w-96 overflow-y-auto rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-4 text-[#1e1c1a] shadow-2xl sm:p-5">
                   <div className="flex items-center justify-between border-b border-[#eee7df] pb-3">
                     <div>
                       <h4 className="font-semibold text-sm">Share Booking Page</h4>
@@ -1002,7 +1002,7 @@ export default function DashboardPage() {
               <div className="grid min-w-0 gap-5 xl:grid-cols-[1.35fr_.65fr]">
                 {/* Today's Schedule */}
                 <div className="min-w-0 rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-4 shadow-sm sm:p-6 md:p-7">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
                     <div>
                       <p className="eyebrow">Operations / Today</p>
                       <h2 className="mt-1.5 text-2xl font-semibold tracking-[-.05em]">Today&apos;s schedule</h2>
