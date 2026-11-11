@@ -47,6 +47,8 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 Keep secret values private. Never expose `SUPABASE_SERVICE_ROLE_KEY` or `PAYSTACK_SECRET_KEY` in browser code, commit them to GitHub, or assign them to a `NEXT_PUBLIC_` variable. The `.gitignore` file excludes `.env*` files.
 
+Browser Supabase sessions are stored in browser storage rather than request cookies to avoid oversized Vercel request headers. After upgrading from a cookie-based deployment, clear the site's existing cookies once and sign in again.
+
 ### Set up Supabase
 
 1. In your Supabase project, open **SQL Editor**.

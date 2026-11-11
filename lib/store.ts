@@ -101,6 +101,8 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     time: '09:30',
     date: 'Today',
     amount: 8500,
+    deposit_paid_kobo: 255000,
+    payment_status: 'paid',
     status: 'Paid',
   },
   {
@@ -112,6 +114,8 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     time: '11:00',
     date: 'Today',
     amount: 12000,
+    deposit_paid_kobo: 0,
+    payment_status: 'unpaid',
     status: 'Confirmed',
   },
   {
@@ -123,6 +127,8 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     time: '14:30',
     date: 'Today',
     amount: 18500,
+    deposit_paid_kobo: 0,
+    payment_status: 'unpaid',
     status: 'Confirmed',
   },
   {
@@ -134,6 +140,8 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     time: '16:00',
     date: 'Today',
     amount: 6000,
+    deposit_paid_kobo: 0,
+    payment_status: 'unpaid',
     status: 'Pending',
   },
 ]

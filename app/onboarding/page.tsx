@@ -42,6 +42,7 @@ export default function OnboardingPage() {
       setSubmitError('Please choose an image file smaller than 100 KB.')
       return
     }
+    setSubmitError('')
     const reader = new FileReader()
     reader.onload = (event) => {
       const base64Url = event.target?.result as string
@@ -163,9 +164,13 @@ export default function OnboardingPage() {
         {/* Top Header */}
         <div className="flex items-center justify-between px-6 py-4 lg:px-10 lg:py-5">
           <div className="flex items-center gap-2">
+            <Logo className="sm:hidden" />
             <button
-              onClick={() => (step > 1 ? setStep((s) => (s - 1) as any) : router.push('/'))}
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#1e1c1a] transition hover:text-[#d46b4f]"
+              onClick={() => {
+                if (step > 1) setStep(step === 3 ? 2 : 1)
+                else router.push('/')
+              }}
+              className="hidden items-center gap-1.5 text-sm font-semibold text-[#1e1c1a] transition hover:text-[#d46b4f] sm:inline-flex"
             >
               <ChevronLeft size={18} /> Back
             </button>
@@ -214,11 +219,29 @@ export default function OnboardingPage() {
                 </p>
               </div>
 
-              <form className="space-y-3.5" onSubmit={(e) => { e.preventDefault(); setStep(2) }}>
+              <form
+                className="space-y-3.5"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setSubmitError('')
+                  if (
+                    !businessData.businessName.trim() ||
+                    !businessData.ownerFirstName.trim() ||
+                    !businessData.ownerLastName.trim() ||
+                    !businessData.email.trim() ||
+                    !businessData.phone.trim()
+                  ) {
+                    setSubmitError('Complete all required fields before continuing.')
+                    return
+                  }
+                  setStep(2)
+                }}
+              >
                 {/* Business name - full width */}
                 <label className="block space-y-1">
                   <span className="text-sm font-medium">Business name</span>
                   <input
+                    required
                     value={businessData.businessName}
                     onChange={(e) => setBusinessData({ ...businessData, businessName: e.target.value })}
                     placeholder="e.g. The Common Room"
@@ -231,6 +254,7 @@ export default function OnboardingPage() {
                   <label className="block space-y-1">
                     <span className="text-sm font-medium">First name</span>
                     <input
+                      required
                       value={businessData.ownerFirstName}
                       onChange={(e) => setBusinessData({ ...businessData, ownerFirstName: e.target.value })}
                       placeholder="First name"
@@ -240,6 +264,7 @@ export default function OnboardingPage() {
                   <label className="block space-y-1">
                     <span className="text-sm font-medium">Last name</span>
                     <input
+                      required
                       value={businessData.ownerLastName}
                       onChange={(e) => setBusinessData({ ...businessData, ownerLastName: e.target.value })}
                       placeholder="Last name"
@@ -254,6 +279,7 @@ export default function OnboardingPage() {
                     <span className="text-sm font-medium">Email address</span>
                     <input
                       type="email"
+                      required
                       value={businessData.email}
                       onChange={(e) => setBusinessData({ ...businessData, email: e.target.value })}
                       placeholder="owner@yourplace.com"
@@ -263,6 +289,8 @@ export default function OnboardingPage() {
                   <label className="block space-y-1">
                     <span className="text-sm font-medium">Phone number</span>
                     <input
+                      type="tel"
+                      required
                       value={businessData.phone}
                       onChange={(e) => setBusinessData({ ...businessData, phone: e.target.value })}
                       placeholder="+234 800 000 0000"
@@ -273,8 +301,7 @@ export default function OnboardingPage() {
 
                 <div className="pt-2 flex gap-3">
                   <button
-                    type="button"
-                    onClick={() => setStep(2)}
+                    type="submit"
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-[#d46b4f] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#c6604f]"
                   >
                     Next: Profile & Security <ArrowRight size={15} />
@@ -295,10 +322,33 @@ export default function OnboardingPage() {
                 </p>
               </div>
 
-              <form className="space-y-3.5" onSubmit={(e) => { e.preventDefault(); setStep(3) }}>
+              <form
+                className="space-y-3.5"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setSubmitError('')
+                  if (!businessData.logoUrl) {
+                    setSubmitError('Upload your business logo before continuing.')
+                    return
+                  }
+                  if (!businessData.address.trim()) {
+                    setSubmitError('Enter your business address before continuing.')
+                    return
+                  }
+                  if (!businessData.password || !businessData.confirmPassword) {
+                    setSubmitError('Enter and confirm your password before continuing.')
+                    return
+                  }
+                  if (businessData.password !== businessData.confirmPassword) {
+                    setSubmitError('Your passwords do not match.')
+                    return
+                  }
+                  setStep(3)
+                }}
+              >
                 {/* Upload Logo Card */}
                 <div>
-                  <span className="mb-1 block text-sm font-medium">Brand logo</span>
+                  <span className="mb-1 block text-sm font-medium">Brand logo <span className="text-[#d46b4f]">*</span></span>
                   <div className="flex items-center gap-4 rounded-2xl border border-dashed border-[#ded8cf] bg-[#fffaf8] p-3">
                     <div className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[#ded8cf] bg-white">
                       {businessData.logoUrl ? (
@@ -314,7 +364,7 @@ export default function OnboardingPage() {
                       </div>
                       <label className="cursor-pointer rounded-full border border-[#ded8cf] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#1e1c1a] shadow-sm transition hover:border-[#d46b4f] hover:text-[#d46b4f]">
                         <span>{businessData.logoUrl ? 'Change logo' : 'Upload logo'}</span>
-                        <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                        <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" aria-required="true" />
                       </label>
                     </div>
                   </div>
@@ -324,6 +374,7 @@ export default function OnboardingPage() {
                 <label className="block space-y-1">
                   <span className="text-sm font-medium">Studio / business address</span>
                   <input
+                    required
                     value={businessData.address}
                     onChange={(e) => setBusinessData({ ...businessData, address: e.target.value })}
                     placeholder="e.g. 14 Admiralty Way, Lekki Phase 1, Lagos"
@@ -338,6 +389,7 @@ export default function OnboardingPage() {
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
+                        required
                         value={businessData.password}
                         onChange={(e) => setBusinessData({ ...businessData, password: e.target.value })}
                         placeholder="••••••••"
@@ -359,6 +411,7 @@ export default function OnboardingPage() {
                     <div className="relative">
                       <input
                         type={showConfirmPassword ? 'text' : 'password'}
+                        required
                         value={businessData.confirmPassword}
                         onChange={(e) => setBusinessData({ ...businessData, confirmPassword: e.target.value })}
                         placeholder="••••••••"
@@ -389,8 +442,7 @@ export default function OnboardingPage() {
                     Back
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setStep(3)}
+                    type="submit"
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-[#d46b4f] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#c6604f]"
                   >
                     Next: Choose services <ArrowRight size={15} />
