@@ -183,6 +183,7 @@ export default function DashboardPage() {
   const [shareCopied, setShareCopied] = useState(false)
   const [bookingUrl, setBookingUrl] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const aptFilterRef = useRef<HTMLDivElement>(null)
   const shareRef = useRef<HTMLDivElement>(null)
   const notificationsRef = useRef<HTMLDivElement>(null)
   const mobileMenuBackdropRef = useRef<HTMLButtonElement>(null)
@@ -247,6 +248,9 @@ export default function DashboardPage() {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setOpenActionDropdownId(null)
       }
+      if (aptFilterRef.current && !aptFilterRef.current.contains(event.target as Node)) {
+        setAptFilterMenuOpen(false)
+      }
       if (shareRef.current && !shareRef.current.contains(event.target as Node)) {
         setShareOpen(false)
       }
@@ -277,6 +281,7 @@ export default function DashboardPage() {
   // Appointment filters & search
   const [aptSearch, setAptSearch] = useState('')
   const [aptFilter, setAptFilter] = useState<'All' | 'Paid' | 'Confirmed' | 'Pending' | 'Archived' | 'Rejected'>('All')
+  const [aptFilterMenuOpen, setAptFilterMenuOpen] = useState(false)
 
   // Client search
   const [clientSearch, setClientSearch] = useState('')
@@ -634,7 +639,7 @@ export default function DashboardPage() {
                   </div>
                 )}
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-white">{businessSettings.ownerName}</p>
+                  <p className="truncate text-sm font-semibold text-white">{businessSettings.ownerName}</p>
                   <p className="truncate text-[10px] text-white/40">{businessSettings.businessName}</p>
                 </div>
               </div>
@@ -734,13 +739,13 @@ export default function DashboardPage() {
                   alt={businessSettings.businessName}
                   className="h-9 sm:h-10 max-w-[120px] sm:max-w-[160px] object-contain rounded-lg bg-white/5 p-1 border border-white/10"
                 />
-                <span className="text-xs sm:text-sm font-semibold tracking-[-0.02em] text-white inline truncate max-w-[130px] sm:max-w-none">
+                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-white inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-semibold tracking-[-0.02em] text-white/90 inline truncate max-w-[130px] sm:max-w-none">
+                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-white/90 inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
               </div>
@@ -765,7 +770,7 @@ export default function DashboardPage() {
               </button>
 
               {shareOpen && (
-                <div className="absolute right-0 top-12 z-30 max-h-[calc(100dvh-6rem)] w-full max-w-96 overflow-y-auto rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-4 text-[#1e1c1a] shadow-2xl sm:p-5">
+                <div className="absolute right-[-44px] top-12 z-30 max-h-[calc(100dvh-6rem)] w-[calc(100vw-2rem)] max-w-96 overflow-y-auto rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-4 text-[#1e1c1a] shadow-2xl sm:right-0 sm:p-5">
                   <div className="flex items-center justify-between border-b border-[#eee7df] pb-3">
                     <div>
                       <h4 className="font-semibold text-sm">Share Booking Page</h4>
@@ -1144,7 +1149,7 @@ export default function DashboardPage() {
                     />
                   </div>
 
-                  <div className="flex items-center gap-1.5 rounded-full border border-[#ded8cf] bg-[#fbfaf7] p-1 text-xs font-semibold">
+                  <div className="hidden items-center gap-1.5 rounded-full border border-[#ded8cf] bg-[#fbfaf7] p-1 text-xs font-semibold sm:flex">
                     {(['All', 'Paid', 'Confirmed', 'Pending', 'Archived', 'Rejected'] as const).map((filter) => (
                       <button
                         key={filter}
@@ -1161,11 +1166,62 @@ export default function DashboardPage() {
                       </button>
                     ))}
                   </div>
+                  <div className="relative flex-1 min-w-[240px] max-w-md sm:hidden" ref={aptFilterRef}>
+                    <div className="flex w-full items-center justify-between gap-4 rounded-full border border-[#ded8cf] bg-[#fbfaf7] p-1 text-xs font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setAptFilter('All')}
+                        className={cn(
+                          'rounded-full px-3 py-1.5 text-[11px] transition',
+                          aptFilter === 'All'
+                            ? 'bg-[#1e1c1a] text-white shadow-sm'
+                            : 'text-[#8c847c] hover:text-[#1e1c1a]'
+                        )}
+                      >
+                        {aptFilter}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAptFilterMenuOpen(!aptFilterMenuOpen)}
+                        aria-label="Filter appointments by status"
+                        aria-expanded={aptFilterMenuOpen}
+                        className="grid size-8 place-items-center rounded-full text-[#756f69] transition hover:bg-white"
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                    </div>
+                    {aptFilterMenuOpen && (
+                      <div className="absolute right-[-44px] top-full z-30 mt-2 w-40 rounded-2xl border border-[#e5ddd4] bg-white p-1.5 shadow-xl">
+                        {([
+                          ['Paid', 'Paid'],
+                          ['Confirmed', 'Confirmed'],
+                          ['Pending', 'Pending'],
+                          ['Archived', 'Archived'],
+                          ['Rejected', 'Reject'],
+                        ] as const).map(([filter, label]) => (
+                          <button
+                            key={filter}
+                            type="button"
+                            onClick={() => {
+                              setAptFilter(filter)
+                              setAptFilterMenuOpen(false)
+                            }}
+                            className={cn(
+                              'w-full rounded-xl px-3 py-2 text-left text-xs font-semibold transition hover:bg-[#f1ece5]',
+                              aptFilter === filter ? 'text-[#1e1c1a]' : 'text-[#756f69]'
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Appointments Table */}
-                <div className="mt-6 overflow-x-visible">
-                  <table className="w-full text-left text-sm">
+                <div className="mt-6 min-w-0 max-w-full overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-[#eee7df] text-[11px] font-bold uppercase tracking-wider text-[#8c847c]">
                         <th className="pb-3 pl-2">Time</th>
