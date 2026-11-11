@@ -157,7 +157,7 @@ export default function LandingPage() {
             <Link
               data-scroll-reveal
               href="/onboarding"
-              className="inline-flex items-center gap-2 rounded-full bg-[#1e1c1a] px-7 py-4 text-sm font-semibold text-white shadow-md transition hover:bg-[#d46b4f] hover:-translate-y-0.5"
+              className="inline-flex w-fit items-center gap-2 rounded-full bg-[#1e1c1a] px-7 py-4 text-sm font-semibold text-white shadow-md transition hover:bg-[#d46b4f] hover:-translate-y-0.5"
             >
               Set up your business <ArrowRight size={15} />
             </Link>

@@ -30,8 +30,8 @@ export function Footer() {
             <a href="tel:+2348000026652" className="transition-colors hover:text-white">
               +234 800 002 6652
             </a>
-            <a href="mailto:support@booka.com" className="transition-colors hover:text-white">
-              support@booka.com
+            <a href="mailto:booka-co@gmail.com" className="transition-colors hover:text-white">
+              booka-co@gmail.com
             </a>
             <p className="text-xs leading-5 text-white/45">
               Lagos, Nigeria

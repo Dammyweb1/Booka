@@ -176,8 +176,8 @@ export default function OnboardingPage() {
             </button>
           </div>
           <div className="flex items-center gap-4 text-sm text-[#8c847c]">
-            <span>Step {step} of 3</span>
-            <span className="text-xs">·</span>
+            <span className="hidden sm:inline">Step {step} of 3</span>
+            <span className="hidden text-xs sm:inline">·</span>
             <span>
               Already have an account?{' '}
               <Link href="/login" className="font-semibold text-[#1e1c1a] hover:underline">

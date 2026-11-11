@@ -67,7 +67,7 @@ export default function LoginPage() {
           <div className="md:hidden">
             <Logo />
           </div>
-          <span className="ml-auto text-sm text-[#8c847c]">
+          <span className="ml-auto hidden text-sm text-[#8c847c] md:block">
             New to Booka?{' '}
             <Link href="/onboarding" className="font-semibold text-[#1e1c1a] hover:underline">
               Create account
