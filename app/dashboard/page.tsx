@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import gsap from 'gsap'
 import {
   ArrowRight,
   Archive,
@@ -23,6 +24,7 @@ import {
   LayoutDashboard,
   LogOut,
   Mail,
+  Menu,
   MoreVertical,
   Phone,
   Plus,
@@ -58,6 +60,7 @@ export default function DashboardPage() {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<'Overview' | 'Appointments' | 'Services' | 'Clients' | 'Insights' | 'Settings'>('Overview')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isBeeping, setIsBeeping] = useState(false)
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [businessId, setBusinessId] = useState('')
@@ -182,6 +185,45 @@ export default function DashboardPage() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const shareRef = useRef<HTMLDivElement>(null)
   const notificationsRef = useRef<HTMLDivElement>(null)
+  const mobileMenuBackdropRef = useRef<HTMLButtonElement>(null)
+  const mobileMenuPanelRef = useRef<HTMLElement>(null)
+
+  useLayoutEffect(() => {
+    if (!mobileMenuOpen || !mobileMenuPanelRef.current || !mobileMenuBackdropRef.current) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+
+    const context = gsap.context(() => {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        gsap.set(mobileMenuBackdropRef.current, { autoAlpha: 1 })
+        gsap.set(mobileMenuPanelRef.current, { xPercent: 0 })
+        return
+      }
+
+      gsap.fromTo(
+        mobileMenuBackdropRef.current,
+        { autoAlpha: 0 },
+        { autoAlpha: 1, duration: 0.2, ease: 'power1.out' }
+      )
+      gsap.fromTo(
+        mobileMenuPanelRef.current,
+        { xPercent: -100 },
+        { xPercent: 0, duration: 0.35, ease: 'power3.out' }
+      )
+    })
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', closeOnEscape)
+      context.revert()
+    }
+  }, [mobileMenuOpen])
 
   const activeSlug =
     businessSettings.slug ||
@@ -388,6 +430,17 @@ export default function DashboardPage() {
     { label: 'Settings' as const, icon: Settings },
   ]
 
+  const openMobileTab = (tab: (typeof navigation)[number]['label']) => {
+    setActiveTab(tab)
+    setMobileMenuOpen(false)
+  }
+
+  const handleSignOut = async () => {
+    const { error } = await createSupabaseClient().auth.signOut()
+    if (error) setPageError(error.message)
+    else router.replace('/login')
+  }
+
   const serviceMix = [
     { label: 'Barbing', value: '42%', color: 'bg-[#d46b4f]' },
     { label: 'Spa treatments', value: '31%', color: 'bg-[#e89b80]' },
@@ -502,10 +555,105 @@ export default function DashboardPage() {
           {pageError}
         </div>
       )}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            ref={mobileMenuBackdropRef}
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileMenuOpen(false)}
+            className="absolute inset-0 bg-black/50 opacity-0"
+          />
+          <aside
+            ref={mobileMenuPanelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Backoffice navigation"
+            className="absolute inset-y-0 left-0 flex w-[min(19rem,85vw)] flex-col justify-between bg-[#211f1c] px-5 py-6 text-white shadow-2xl"
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <Logo light href="/dashboard" />
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(false)}
+                  aria-label="Close navigation menu"
+                  className="grid size-10 place-items-center rounded-full text-white/70 transition hover:bg-white/10 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <nav className="mt-9">
+                <p className="px-3 text-[10px] font-semibold uppercase tracking-[.2em] text-white/30">
+                  Workspace
+                </p>
+                <div className="mt-3 flex flex-col gap-1">
+                  {navigation.map(({ label, icon: Icon }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => openMobileTab(label)}
+                      className={cn(
+                        'flex items-center justify-between rounded-xl px-3 py-3 text-sm transition',
+                        activeTab === label
+                          ? 'bg-[#f3efe9] font-semibold text-[#211f1c]'
+                          : 'text-white/65 hover:bg-white/10 hover:text-white'
+                      )}
+                    >
+                      <span className="flex items-center gap-3">
+                        <Icon size={17} />
+                        {label}
+                      </span>
+                      {label === 'Appointments' && (
+                        <span className="rounded-full bg-[#d46b4f] px-2 py-0.5 text-[10px] font-semibold text-white">
+                          {appointments.length}
+                        </span>
+                      )}
+                      {label === 'Services' && (
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white">
+                          {services.filter((service) => service.isActive).length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </nav>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-white/10 pt-4">
+              <div className="flex min-w-0 items-center gap-2.5">
+                {businessSettings.logoUrl ? (
+                  <img
+                    src={businessSettings.logoUrl}
+                    alt={businessSettings.businessName}
+                    className="size-9 shrink-0 rounded-full border border-white/20 bg-white/10 object-cover p-0.5"
+                  />
+                ) : (
+                  <div className="grid size-9 shrink-0 place-items-center rounded-full bg-[#d46b4f] text-xs font-semibold text-white">
+                    {businessSettings.ownerName.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-white">{businessSettings.ownerName}</p>
+                  <p className="truncate text-[10px] text-white/40">{businessSettings.businessName}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                aria-label="Sign out"
+                className="ml-3 shrink-0 text-white/50 transition hover:text-white"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
       {/* Dark Sidebar Navigation */}
       <aside className="hidden w-[262px] shrink-0 flex-col justify-between bg-[#211f1c] px-5 py-6 text-white lg:flex">
         <div>
-          <Logo light />
+          <Logo light href="/dashboard" />
           <nav className="mt-9">
             <p className="px-3 text-[10px] font-semibold uppercase tracking-[.2em] text-white/30">
               Workspace
@@ -562,11 +710,7 @@ export default function DashboardPage() {
                 <p className="text-[10px] text-white/40 truncate">{businessSettings.businessName}</p>
               </div>
             </div>
-            <button type="button" onClick={async () => {
-              const { error } = await createSupabaseClient().auth.signOut()
-              if (error) setPageError(error.message)
-              else router.replace('/login')
-            }} aria-label="Sign out" className="text-white/40 hover:text-white shrink-0">
+            <button type="button" onClick={handleSignOut} aria-label="Sign out" className="text-white/40 hover:text-white shrink-0">
               <LogOut size={16} />
             </button>
           </div>
@@ -576,10 +720,15 @@ export default function DashboardPage() {
       {/* Main Workspace Area */}
       <main className="min-w-0 flex-1 flex flex-col">
         {/* TOP HEADER SECTION: FULL-WIDTH, MATCHES SIDEBAR BG (#211f1c), PX-8 */}
-        <header className="w-full bg-[#211f1c] px-8 py-4 text-white border-b border-white/10 flex items-center justify-between">
+        <header className="flex w-full items-center justify-between border-b border-white/10 bg-[#211f1c] px-4 py-4 text-white sm:px-8">
           <div className="flex items-center gap-3">
             {businessSettings.logoUrl ? (
-              <div className="flex items-center gap-2.5 sm:gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveTab('Overview')}
+                aria-label="Go to overview"
+                className="flex min-w-0 items-center gap-2.5 text-left sm:gap-3"
+              >
                 <img
                   src={businessSettings.logoUrl}
                   alt={businessSettings.businessName}
@@ -588,9 +737,9 @@ export default function DashboardPage() {
                 <span className="text-xs sm:text-sm font-semibold tracking-[-0.02em] text-white inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
-              </div>
+              </button>
             ) : (
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
                 <span className="text-xs sm:text-sm font-semibold tracking-[-0.02em] text-white/90 inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
@@ -616,7 +765,7 @@ export default function DashboardPage() {
               </button>
 
               {shareOpen && (
-                <div className="absolute right-0 top-12 z-30 w-80 sm:w-96 rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-5 text-[#1e1c1a] shadow-2xl">
+                <div className="absolute right-0 top-12 z-30 max-h-[calc(100dvh-6rem)] w-[calc(100vw-2rem)] max-w-96 overflow-y-auto rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-4 text-[#1e1c1a] shadow-2xl sm:p-5">
                   <div className="flex items-center justify-between border-b border-[#eee7df] pb-3">
                     <div>
                       <h4 className="font-semibold text-sm">Share Booking Page</h4>
@@ -732,8 +881,21 @@ export default function DashboardPage() {
               )}
             </div>
 
+            <button
+              type="button"
+              onClick={() => {
+                setShareOpen(false)
+                setMobileMenuOpen(true)
+              }}
+              aria-label="Open navigation menu"
+              aria-expanded={mobileMenuOpen}
+              className="grid size-10 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 lg:hidden"
+            >
+              <Menu size={19} />
+            </button>
+
             {/* Action Area: Notification Bell with animated Beep alert */}
-            <div className="relative" ref={notificationsRef}>
+            <div className="relative hidden lg:block" ref={notificationsRef}>
             <button
               type="button"
               onClick={() => {
@@ -837,10 +999,10 @@ export default function DashboardPage() {
               <UsageChart />
 
               {/* Today's Schedule & Revenue Mix */}
-              <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+              <div className="grid min-w-0 gap-5 xl:grid-cols-[1.35fr_.65fr]">
                 {/* Today's Schedule */}
-                <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 md:p-7 shadow-sm">
-                  <div className="flex items-start justify-between">
+                <div className="min-w-0 rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-4 shadow-sm sm:p-6 md:p-7">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="eyebrow">Operations / Today</p>
                       <h2 className="mt-1.5 text-2xl font-semibold tracking-[-.05em]">Today&apos;s schedule</h2>
@@ -861,17 +1023,17 @@ export default function DashboardPage() {
                     {appointments.slice(0, 4).map((apt) => (
                       <div
                         key={apt.id}
-                        className="flex items-center gap-4 rounded-2xl border border-[#eee7df] bg-[#fffdf9] p-3.5 transition hover:border-[#caa08f]"
+                        className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[#eee7df] bg-[#fffdf9] p-3 transition hover:border-[#caa08f] sm:flex-nowrap sm:gap-4 sm:p-3.5"
                       >
-                        <span className="w-12 font-mono text-xs font-medium text-[#998f85]">{apt.time}</span>
-                        <div className="grid size-10 place-items-center rounded-full bg-[#f0ded4] text-xs font-semibold text-[#9e503b]">
+                        <span className="w-12 shrink-0 font-mono text-xs font-medium text-[#998f85]">{apt.time}</span>
+                        <div className="grid size-10 shrink-0 place-items-center rounded-full bg-[#f0ded4] text-xs font-semibold text-[#9e503b]">
                           {apt.clientName.split(' ').map((p) => p[0]).join('')}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold">{apt.clientName}</p>
-                          <p className="text-xs text-[#998f85]">{apt.serviceName}</p>
+                          <p className="truncate text-sm font-semibold">{apt.clientName}</p>
+                          <p className="truncate text-xs text-[#998f85]">{apt.serviceName}</p>
                         </div>
-                        <div className="text-right">
+                        <div className="ml-auto shrink-0 text-right">
                           <p className="text-sm font-semibold">₦{apt.amount.toLocaleString()}</p>
                           <span
                             className={cn(
@@ -892,12 +1054,12 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Revenue Mix */}
-                <div className="rounded-[28px] bg-[#211f1c] p-6 text-white md:p-7">
+                <div className="min-w-0 rounded-[28px] bg-[#211f1c] p-4 text-white sm:p-6 md:p-7">
                   <div className="flex items-center justify-between">
                     <p className="eyebrow text-[#efb49f]">Revenue mix</p>
                     <BarChart3 size={18} className="text-[#e89b80]" />
                   </div>
-                  <p className="mt-6 text-4xl font-medium tracking-[-.07em]">₦{totalRevenue.toLocaleString()}</p>
+                  <p className="mt-6 break-words text-3xl font-medium tracking-[-.07em] sm:text-4xl">₦{totalRevenue.toLocaleString()}</p>
                   <p className="mt-1 text-sm text-white/45">total collected this period</p>
 
                   <div className="mt-8 space-y-5">
@@ -931,12 +1093,12 @@ export default function DashboardPage() {
           {activeTab === 'Appointments' && (
             <div className="space-y-6">
               {/* Sub-tab selector: Management | Calendar */}
-              <div className="flex items-center gap-1 rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-1.5 shadow-sm w-fit">
+              <div className="grid w-full grid-cols-2 gap-1 rounded-2xl border border-[#e5ddd4] bg-[#fffdf9] p-1.5 shadow-sm sm:w-fit">
                 <button
                   type="button"
                   onClick={() => setAptSubTab('management')}
                   className={cn(
-                    'flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-semibold transition',
+                    'flex min-w-0 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-[10px] font-semibold transition sm:gap-2 sm:px-5 sm:text-xs',
                     aptSubTab === 'management'
                       ? 'bg-[#1e1c1a] text-white shadow-sm'
                       : 'text-[#8c847c] hover:text-[#1e1c1a] hover:bg-[#f1ece5]'
@@ -948,7 +1110,7 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setAptSubTab('calendar')}
                   className={cn(
-                    'flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-semibold transition',
+                    'flex min-w-0 items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-[10px] font-semibold transition sm:gap-2 sm:px-5 sm:text-xs',
                     aptSubTab === 'calendar'
                       ? 'bg-[#1e1c1a] text-white shadow-sm'
                       : 'text-[#8c847c] hover:text-[#1e1c1a] hover:bg-[#f1ece5]'
@@ -1111,16 +1273,16 @@ export default function DashboardPage() {
               {/* ──── SUB-TAB 2: DYNAMIC BOOKING CALENDAR ──── */}
               {aptSubTab === 'calendar' && (
               <div className="space-y-5">
-                <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 md:p-8 shadow-sm">
+                <div className="min-w-0 rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-3 shadow-sm sm:p-6 md:p-8">
                   {/* Calendar Header with Month Navigation */}
-                  <div className="flex items-center justify-between border-b border-[#eee7df] pb-5">
+                  <div className="flex flex-col items-start gap-4 border-b border-[#eee7df] pb-5 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-2xl font-semibold tracking-[-.04em]">Booking Calendar</h2>
                       <p className="mt-1 text-xs text-[#8c847c]">
                         Visual overview of all scheduled bookings. Click a day to see details.
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex w-full items-center justify-between gap-1 sm:w-auto sm:gap-2">
                       <button
                         type="button"
                         onClick={() => navigateMonth(-1)}
@@ -1129,7 +1291,7 @@ export default function DashboardPage() {
                       >
                         <ChevronLeft size={16} />
                       </button>
-                      <span className="min-w-[140px] text-center text-sm font-semibold">
+                      <span className="min-w-0 flex-1 text-center text-xs font-semibold sm:min-w-[140px] sm:flex-none sm:text-sm">
                         {calendarMonthName} {calendarYear}
                       </span>
                       <button
@@ -1143,7 +1305,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => setCalendarDate(new Date())}
-                        className="ml-2 rounded-full border border-[#ded8cf] px-3 py-1.5 text-[11px] font-semibold text-[#1e1c1a] hover:bg-[#f1ece5] transition"
+                        className="ml-1 shrink-0 rounded-full border border-[#ded8cf] px-2.5 py-1.5 text-[10px] font-semibold text-[#1e1c1a] hover:bg-[#f1ece5] transition sm:ml-2 sm:px-3 sm:text-[11px]"
                       >
                         Today
                       </button>
@@ -1151,14 +1313,14 @@ export default function DashboardPage() {
                   </div>
 
                   {/* Weekday Headers */}
-                  <div className="mt-5 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wider text-[#8c847c]">
+                  <div className="mt-5 grid grid-cols-7 gap-0.5 text-center text-[9px] font-bold uppercase tracking-wider text-[#8c847c] sm:gap-1 sm:text-[10px]">
                     {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
                       <div key={d} className="py-2">{d}</div>
                     ))}
                   </div>
 
                   {/* Calendar Grid */}
-                  <div className="mt-1 grid grid-cols-7 gap-1">
+                  <div className="mt-1 grid grid-cols-7 gap-0.5 sm:gap-1">
                     {/* Empty cells for days before the 1st */}
                     {Array.from({ length: firstDayOfWeek }).map((_, i) => (
                       <div key={`empty-${i}`} className="aspect-square" />
@@ -1181,7 +1343,7 @@ export default function DashboardPage() {
                           type="button"
                           onClick={() => setSelectedCalDay(isSelected ? null : day)}
                           className={cn(
-                            'relative aspect-square rounded-2xl border text-xs font-medium transition-all flex flex-col items-center justify-center gap-0.5',
+                            'relative aspect-square min-w-0 rounded-lg border text-[11px] font-medium transition-all flex flex-col items-center justify-center gap-0.5 sm:rounded-2xl sm:text-xs',
                             isSelected
                               ? 'border-[#d46b4f] bg-[#d46b4f]/10 shadow-md ring-1 ring-[#d46b4f]/30'
                               : isToday
@@ -1193,7 +1355,7 @@ export default function DashboardPage() {
                         >
                           <span
                             className={cn(
-                              'text-sm font-semibold',
+                              'text-xs font-semibold sm:text-sm',
                               isToday ? 'text-[#d46b4f]' : 'text-[#1e1c1a]',
                               isSelected && 'text-[#d46b4f]'
                             )}
@@ -1266,17 +1428,17 @@ export default function DashboardPage() {
                         {selectedDayAppointments.map((apt) => (
                           <div
                             key={apt.id}
-                            className="flex items-center gap-4 rounded-2xl border border-[#eee7df] bg-[#fbfaf7] p-4 transition hover:border-[#caa08f]"
+                            className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[#eee7df] bg-[#fbfaf7] p-3 transition hover:border-[#caa08f] sm:flex-nowrap sm:gap-4 sm:p-4"
                           >
-                            <span className="w-14 font-mono text-xs font-medium text-[#998f85]">{apt.time}</span>
-                            <div className="grid size-10 place-items-center rounded-full bg-[#f0ded4] text-xs font-semibold text-[#9e503b]">
+                            <span className="w-14 shrink-0 font-mono text-xs font-medium text-[#998f85]">{apt.time}</span>
+                            <div className="grid size-10 shrink-0 place-items-center rounded-full bg-[#f0ded4] text-xs font-semibold text-[#9e503b]">
                               {apt.clientName.split(' ').map((p) => p[0]).join('')}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold">{apt.clientName}</p>
-                              <p className="text-xs text-[#998f85]">{apt.serviceName}</p>
+                              <p className="truncate text-sm font-semibold">{apt.clientName}</p>
+                              <p className="truncate text-xs text-[#998f85]">{apt.serviceName}</p>
                             </div>
-                            <div className="text-right">
+                            <div className="ml-auto shrink-0 text-right">
                               <p className="text-sm font-semibold">₦{apt.amount.toLocaleString()}</p>
                               <span
                                 className={cn(
