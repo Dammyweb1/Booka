@@ -18,6 +18,10 @@ create table if not exists public.businesses (
   updated_at timestamptz not null default now()
 );
 
+update auth.users
+set raw_user_meta_data = raw_user_meta_data - 'logo_url'
+where raw_user_meta_data->>'logo_url' like 'data:image/%';
+
 create table if not exists public.signup_confirmation_links (
   auth_user_id uuid primary key references auth.users(id) on delete cascade,
   email text not null,

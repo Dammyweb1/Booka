@@ -43,7 +43,7 @@ The dashboard requires an authenticated user linked to a business profile. If an
 
 The publishable key is expected in the browser. Never put a Supabase secret key in `.env.local` under a `NEXT_PUBLIC_` variable. RLS policies restrict dashboard table access to each authenticated owner; public pages use narrowly scoped database functions instead of direct access to private tables.
 
-Logo images are stored in the business profile row as data URLs and are limited to 100 KB.
+Logo images are stored in the business profile row as data URLs and are limited to 100 KB. They are not stored in Supabase Auth user metadata, which is included in authentication tokens and should stay small. The schema removes existing embedded logo values from Auth metadata while preserving logos already saved in the business profile.
 
 ## Password recovery email
 
