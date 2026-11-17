@@ -664,7 +664,7 @@ export default function DashboardPage() {
   const returningClientsPercent = clients.length
     ? Math.round((clients.filter((client) => client.totalBookings > 1).length / clients.length) * 100)
     : 0
-  const paidCount = appointments.filter((a) => a.status === 'Paid').length
+  const paidCount = appointments.filter((a) => a.status === 'Paid' || a.payment_status === 'paid').length
   const confirmedCount = appointments.filter((a) => a.status === 'Confirmed').length
   const pendingCount = appointments.filter((a) => a.status === 'Pending').length
   const unreadNotifsCount = notifications.filter((n) => !n.read).length
