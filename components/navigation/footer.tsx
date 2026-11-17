@@ -44,7 +44,7 @@ export function Footer() {
             Set up your business profile and create a page clients can use to book with you.
           </p>
           <Link href="/onboarding" className="mt-5 inline-flex rounded-full bg-[#d46b4f] px-5 py-3 text-sm font-medium text-white transition-transform hover:-translate-y-0.5">
-            Onboarding
+            Get Started
           </Link>
         </div>
       </div>

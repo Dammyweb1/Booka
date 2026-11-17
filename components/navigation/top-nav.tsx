@@ -56,7 +56,7 @@ export function TopNav() {
             href="/onboarding"
             className="inline-flex items-center gap-1.5 rounded-full bg-[#1e1c1a] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_16px_rgba(30,28,26,.12)] transition hover:-translate-y-0.5 hover:bg-[#d46b4f]"
           >
-            Get started <ArrowRight size={15} />
+            Get Started <ArrowRight size={15} />
           </Link>
         </div>
       </div>

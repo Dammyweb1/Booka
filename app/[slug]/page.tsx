@@ -7,6 +7,8 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Compass,
   MapPin,
@@ -14,7 +16,6 @@ import {
   Scissors,
   Share2,
   ShieldCheck,
-  Sparkles,
   User,
   X,
   ArrowRight,
@@ -23,8 +24,14 @@ import { Logo } from '@/components/brand/logo'
 import { TopNav } from '@/components/navigation/top-nav'
 import { Footer } from '@/components/navigation/footer'
 import { createSupabaseClient } from '@/lib/supabase'
-import { Service, BusinessSettings } from '@/types'
+import { Service, ServiceAddon, BusinessSettings } from '@/types'
 import { cn } from '@/lib/utils'
+
+type BookableAddon = ServiceAddon & {
+  serviceId: string
+  category: Service['category']
+  categoryName: string
+}
 
 interface ConfirmedBooking {
   id: string
@@ -33,11 +40,21 @@ interface ConfirmedBooking {
   client_phone: string
   client_email: string
   service_name: string
+  selected_addons: Array<{
+    id: string
+    name: string
+    price: number
+    duration_minutes: number
+  }>
   appointment_date: string
   appointment_time: string
   amount: number
   deposit_paid_kobo: number
   payment_status: 'unpaid' | 'paid'
+}
+
+function formatLocalDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 export default function BusinessBookingPage() {
@@ -56,9 +73,13 @@ export default function BusinessBookingPage() {
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false)
 
   // Booking selections
-  const [selectedServiceId, setSelectedServiceId] = useState<string>('')
+  const [selectedAddonKeys, setSelectedAddonKeys] = useState<string[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
-  const [selectedDateIndex, setSelectedDateIndex] = useState<number>(0)
+  const [selectedDateIso, setSelectedDateIso] = useState(() => formatLocalDate(new Date()))
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('10:15 AM')
 
   // Guest contact info
@@ -108,19 +129,36 @@ export default function BusinessBookingPage() {
             color: string
             icon_color: string
             is_active: boolean
+            addons: Array<{
+              id: string
+              name: string
+              price: number
+              duration_minutes: number
+              is_active: boolean
+            }>
           }>
         }
-        const loadedServices = result.services.filter((service) => service.is_active).map((service) => ({
-          id: service.id,
-          name: service.name,
-          detail: service.detail,
-          category: service.category,
-          durationMinutes: service.duration_minutes,
-          price: service.price,
-          color: service.color,
-          iconColor: service.icon_color,
-          isActive: service.is_active,
-        }))
+        const loadedServices = result.services
+          .map((service) => ({
+            id: service.id,
+            name: service.name,
+            detail: service.detail,
+            category: service.category,
+            durationMinutes: service.duration_minutes,
+            price: 0,
+            color: service.color,
+            iconColor: service.icon_color,
+            isActive: service.is_active,
+            addons: service.addons
+              .filter((addon) => addon.is_active && addon.price > 0)
+              .map((addon) => ({
+                id: addon.id,
+                name: addon.name,
+                price: addon.price,
+                durationMinutes: addon.duration_minutes,
+                isActive: addon.is_active,
+              })),
+          }))
         if (!active) return
         setBusinessSettings({
           businessId: result.business_id,
@@ -139,7 +177,7 @@ export default function BusinessBookingPage() {
           cancellationWindow: '',
         })
         setServices(loadedServices)
-        setSelectedServiceId(loadedServices[0]?.id ?? '')
+        setSelectedAddonKeys([])
         setActiveSlug(result.slug)
       } catch (error) {
         if (active) setLoadError(error instanceof Error ? error.message : 'Could not load this business.')
@@ -202,19 +240,38 @@ export default function BusinessBookingPage() {
     return () => { active = false }
   }, [rawSlug])
 
-  // Generate the next 6 days starting from today
-  const upcomingDays = Array.from({ length: 6 }).map((_, i) => {
-    const d = new Date()
-    d.setDate(d.getDate() + i)
-    return {
-      index: i,
-      label: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-US', { weekday: 'short' }),
-      dateNumber: d.getDate(),
-      month: d.toLocaleDateString('en-US', { month: 'short' }),
-      fullDateString: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-      isoDate: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-    }
-  })
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const todayIso = formatLocalDate(today)
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1)
+  const calendarDays = Array.from(
+    { length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() },
+    (_, index) => new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), index + 1)
+  )
+  const calendarCells: (Date | null)[] = [
+    ...Array.from({ length: monthStart.getDay() }, () => null),
+    ...calendarDays,
+  ]
+  const selectedDate = new Date(`${selectedDateIso}T00:00:00`)
+  const selectedDateObj = {
+    isoDate: selectedDateIso,
+    label:
+      selectedDateIso === todayIso
+        ? 'Today'
+        : selectedDateIso === formatLocalDate(tomorrow)
+          ? 'Tomorrow'
+          : selectedDate.toLocaleDateString('en-US', { weekday: 'short' }),
+    fullDateString: selectedDate.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    }),
+  }
+  const isCurrentCalendarMonth =
+    calendarMonth.getFullYear() === today.getFullYear() &&
+    calendarMonth.getMonth() === today.getMonth()
 
   // Available time slots grouped by period
   const timeSlots = [
@@ -230,15 +287,36 @@ export default function BusinessBookingPage() {
       ? services
       : services.filter((s) => s.category.toLowerCase() === selectedCategory.toLowerCase())
 
-  const selectedService = services.find((s) => s.id === selectedServiceId) || services[0]
-  const selectedDateObj = upcomingDays[selectedDateIndex] || upcomingDays[0]
-  const depositPaidKobo = selectedService ? selectedService.price * 30 : 0
+  const bookableAddons: BookableAddon[] = services.flatMap((service) =>
+    service.addons.map((addon) => ({
+      ...addon,
+      serviceId: service.id,
+      category: service.category,
+      categoryName: service.name,
+    }))
+  )
+  const selectedAddons = bookableAddons.filter((addon) =>
+    selectedAddonKeys.includes(JSON.stringify([addon.serviceId, addon.id]))
+  )
+  const totalServicePrice = selectedAddons.reduce((total, addon) => total + addon.price, 0)
+  const totalDuration = selectedAddons.reduce((total, addon) => total + addon.durationMinutes, 0)
+  const depositPaidKobo = totalServicePrice * 30
   const formatNairaKobo = (amountKobo: number) =>
     `₦${(amountKobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const handleToggleBookableAddon = (addon: BookableAddon) => {
+    const key = JSON.stringify([addon.serviceId, addon.id])
+    setSelectedAddonKeys((current) =>
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : current.length < 10
+          ? [...current, key]
+          : current
+    )
+  }
 
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!businessSettings || !customerName || !customerPhone || !customerEmail || !selectedService) return
+    if (!businessSettings || !customerName || !customerPhone || !customerEmail || selectedAddons.length === 0) return
     setBookingError('')
     setIsSubmittingBooking(true)
     try {
@@ -247,7 +325,10 @@ export default function BusinessBookingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           slug: activeSlug,
-          serviceId: selectedService.id,
+          items: selectedAddons.map((addon) => ({
+            serviceId: addon.serviceId,
+            addonId: addon.id,
+          })),
           clientName: customerName.trim(),
           clientPhone: customerPhone.trim(),
           clientEmail: customerEmail.trim(),
@@ -277,6 +358,7 @@ export default function BusinessBookingPage() {
     setCustomerPhone('')
     setCustomerEmail('')
     setCustomerNotes('')
+    setSelectedAddonKeys([])
   }
 
   if (isLoadingBusiness) {
@@ -372,8 +454,8 @@ export default function BusinessBookingPage() {
               <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 md:p-8 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#eee7df] pb-5">
                   <div>
-                    <span className="eyebrow text-[#d46b4f]">Step 01 / Experience</span>
-                    <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em]">Select a Service</h2>
+                    <span className="eyebrow text-[#d46b4f]">Step 01 / Choose items</span>
+                    <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em]">Select bookable items</h2>
                   </div>
 
                   {/* Category Pills */}
@@ -396,65 +478,72 @@ export default function BusinessBookingPage() {
                   </div>
                 </div>
 
-                {/* Service Cards Grid */}
-                <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                  {filteredServices.map((svc) => {
-                    const isSelected = selectedServiceId === svc.id
-                    return (
-                      <button
-                        key={svc.id}
-                        type="button"
-                        onClick={() => setSelectedServiceId(svc.id)}
-                        className={cn(
-                          'relative flex flex-col justify-between rounded-2xl border p-5 text-left transition-all',
-                          isSelected
-                            ? 'border-[#d46b4f] bg-[#fff9f6] shadow-sm ring-2 ring-[#d46b4f]/20'
-                            : 'border-[#eee7df] bg-[#fbfaf7] hover:border-[#caa08f] hover:bg-white'
-                        )}
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <span
+                <p className="mt-5 text-xs text-[#8c847c]">Choose one or more items. Categories are for organization only.</p>
+                <div className="mt-4 space-y-5">
+                  {filteredServices.map((group) => (
+                    <section key={group.id} aria-label={`${group.name} items`}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={cn(
+                          'rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider',
+                          group.color,
+                          group.iconColor
+                        )}>
+                          {group.category}
+                        </span>
+                        <h3 className="text-sm font-semibold text-[#302c27]">{group.name}</h3>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {group.addons.map((addon) => {
+                          const key = JSON.stringify([group.id, addon.id])
+                          const isSelected = selectedAddonKeys.includes(key)
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              aria-pressed={isSelected}
+                              disabled={!isSelected && selectedAddonKeys.length >= 10}
+                              onClick={() => handleToggleBookableAddon({
+                                ...addon,
+                                serviceId: group.id,
+                                category: group.category,
+                                categoryName: group.name,
+                              })}
                               className={cn(
-                                'rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider',
-                                svc.color,
-                                svc.iconColor
-                              )}
-                            >
-                              {svc.category}
-                            </span>
-                            <span
-                              className={cn(
-                                'grid size-5 place-items-center rounded-full border transition',
+                                'flex items-center gap-3 rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45',
                                 isSelected
-                                  ? 'border-[#d46b4f] bg-[#d46b4f] text-white'
-                                  : 'border-[#ded8cf] bg-white'
+                                  ? 'border-[#d46b4f] bg-[#fff8f4] ring-2 ring-[#d46b4f]/15'
+                                  : 'border-[#eee7df] bg-[#fbfaf7] hover:border-[#caa08f] hover:bg-white'
                               )}
                             >
-                              {isSelected && <Check size={11} strokeWidth={3} />}
-                            </span>
-                          </div>
-
-                          <h3 className="mt-3 font-semibold text-base text-[#1e1c1a]">{svc.name}</h3>
-                          <p className="mt-1 text-xs text-[#756f69] line-clamp-2 leading-relaxed">
-                            {svc.detail}
+                              <span className={cn(
+                                'grid size-5 shrink-0 place-items-center rounded-full border',
+                                isSelected ? 'border-[#d46b4f] bg-[#d46b4f] text-white' : 'border-[#d8d0c8] bg-white'
+                              )}>
+                                {isSelected && <Check size={12} strokeWidth={3} />}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-[#211f1c]">{addon.name}</span>
+                                <span className="mt-1 block text-[11px] text-[#8c847c]">
+                                  {addon.durationMinutes} min
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-sm font-semibold text-[#d46b4f]">
+                                ₦{addon.price.toLocaleString()}
+                              </span>
+                            </button>
+                          )
+                        })}
+                        {group.addons.length === 0 && (
+                          <p className="rounded-2xl border border-dashed border-[#ded8cf] bg-[#fbfaf7] p-4 text-xs text-[#8c847c] sm:col-span-2">
+                            No bookable items are currently available in this category.
                           </p>
-                        </div>
-
-                        <div className="mt-5 flex items-center justify-between border-t border-[#eee7df] pt-3 text-xs">
-                          <span className="flex items-center gap-1.5 text-[#8c847c]">
-                            <Clock size={13} /> {svc.durationMinutes} mins
-                          </span>
-                          <span className="font-semibold text-sm text-[#1e1c1a]">
-                            ₦{svc.price.toLocaleString()}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  })}
+                        )}
+                      </div>
+                    </section>
+                  ))}
                   {filteredServices.length === 0 && (
-                    <p className="rounded-2xl border border-dashed border-[#ded8cf] bg-[#fbfaf7] p-5 text-sm text-[#756f69] sm:col-span-2">
-                      This business has no services available to book right now. Please contact them directly.
+                    <p className="rounded-2xl border border-dashed border-[#ded8cf] bg-[#fbfaf7] p-5 text-sm text-[#756f69]">
+                      This business hasn&apos;t published any bookable items yet. Please check back soon.
                     </p>
                   )}
                 </div>
@@ -463,35 +552,89 @@ export default function BusinessBookingPage() {
               {/* STEP 2: DATE & TIME SELECTION */}
               <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 md:p-8 shadow-sm">
                 <span className="eyebrow text-[#d46b4f]">Step 02 / Schedule</span>
-                <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em]">Choose Date & Time Slot</h2>
+                <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em]">Choose a date & time</h2>
 
-                {/* Horizontal Date Selector */}
-                <div className="mt-5 grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {upcomingDays.map((day) => {
-                    const isSelected = selectedDateIndex === day.index
-                    return (
+                <div className="mt-5 overflow-hidden rounded-[24px] border border-[#eee7df] bg-white">
+                  <div className="flex items-center justify-between border-b border-[#eee7df] bg-[#fbfaf7] px-4 py-3 sm:px-5">
+                    <p className="font-semibold text-sm">
+                      {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </p>
+                    <div className="flex items-center gap-1">
                       <button
-                        key={day.index}
                         type="button"
-                        onClick={() => setSelectedDateIndex(day.index)}
-                        className={cn(
-                          'flex flex-col items-center justify-center rounded-2xl border p-3 transition text-center',
-                          isSelected
-                            ? 'border-[#d46b4f] bg-[#d46b4f] text-white shadow-md'
-                            : 'border-[#eee7df] bg-[#fbfaf7] hover:border-[#caa08f] hover:bg-white text-[#1e1c1a]'
-                        )}
+                        disabled={isCurrentCalendarMonth}
+                        onClick={() =>
+                          setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))
+                        }
+                        aria-label="Previous month"
+                        className="grid size-9 place-items-center rounded-full text-[#756f69] transition hover:bg-white hover:text-[#1e1c1a] disabled:cursor-not-allowed disabled:opacity-35"
                       >
-                        <span className={cn('text-[11px] font-semibold uppercase tracking-wider', isSelected ? 'text-white/80' : 'text-[#8c847c]')}>
-                          {day.label}
-                        </span>
-                        <span className="mt-1 text-xl font-bold">{day.dateNumber}</span>
-                        <span className={cn('text-[10px]', isSelected ? 'text-white/80' : 'text-[#8c847c]')}>
-                          {day.month}
-                        </span>
+                        <ChevronLeft size={17} />
                       </button>
-                    )
-                  })}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))
+                        }
+                        aria-label="Next month"
+                        className="grid size-9 place-items-center rounded-full text-[#756f69] transition hover:bg-white hover:text-[#1e1c1a]"
+                      >
+                        <ChevronRight size={17} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-y-1 p-3 sm:gap-y-2 sm:p-5">
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((weekday) => (
+                      <span
+                        key={weekday}
+                        className="pb-2 text-center text-[10px] font-semibold uppercase tracking-wider text-[#a39a91] sm:pb-3 sm:text-[11px]"
+                      >
+                        {weekday}
+                      </span>
+                    ))}
+                    {calendarCells.map((date, index) => {
+                      if (!date) return <span key={`empty-${index}`} aria-hidden="true" />
+                      const isoDate = formatLocalDate(date)
+                      const isSelected = isoDate === selectedDateIso
+                      const isToday = isoDate === todayIso
+                      const isPastDate = isoDate < todayIso
+                      return (
+                        <button
+                          key={isoDate}
+                          type="button"
+                          disabled={isPastDate}
+                          onClick={() => setSelectedDateIso(isoDate)}
+                          aria-label={date.toLocaleDateString('en-US', {
+                            weekday: 'long',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                          aria-pressed={isSelected}
+                          className={cn(
+                            'relative mx-auto grid size-9 place-items-center rounded-full text-sm font-medium transition sm:size-10',
+                            isSelected
+                              ? 'bg-[#d46b4f] text-white shadow-sm'
+                              : isPastDate
+                                ? 'cursor-not-allowed text-[#d3ccc4]'
+                                : 'text-[#332f2b] hover:bg-[#f8eee9]',
+                            isToday && !isSelected && 'ring-1 ring-[#d46b4f]/50'
+                          )}
+                        >
+                          {date.getDate()}
+                          {isToday && !isSelected && (
+                            <span className="absolute bottom-1 size-1 rounded-full bg-[#d46b4f]" />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
+
+                <p className="mt-3 flex items-center gap-2 text-xs text-[#756f69]">
+                  <CalendarDays size={14} className="text-[#d46b4f]" />
+                  Selected: <span className="font-semibold text-[#1e1c1a]">{selectedDateObj.fullDateString}</span>
+                </p>
 
                 {/* Grouped Time Slots */}
                 <div className="mt-8 space-y-5">
@@ -591,18 +734,26 @@ export default function BusinessBookingPage() {
 
                 {/* Appointment breakdown */}
                 <div className="mt-5 space-y-4 text-xs">
-                  <div className="flex justify-between items-start">
-                    <span className="text-[#8c847c]">Service</span>
-                    <span className="font-semibold text-right text-[#1e1c1a]">
-                      {selectedService?.name || 'Select a service'}
-                    </span>
-                  </div>
-
                   <div className="flex justify-between">
                     <span className="text-[#8c847c]">Duration</span>
                     <span className="font-semibold text-[#1e1c1a]">
-                      {selectedService?.durationMinutes || 45} minutes
+                      {totalDuration} minutes
                     </span>
+                  </div>
+
+                  <div>
+                    <p className="text-[#8c847c]">Selected items</p>
+                    {selectedAddons.length > 0 ? (
+                      <ul className="mt-1 space-y-1 text-right font-semibold text-[#1e1c1a]">
+                        {selectedAddons.map((addon) => (
+                          <li key={`${addon.serviceId}:${addon.id}`}>
+                            {addon.name} <span className="font-normal text-[#8c847c]">({addon.categoryName})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1 text-right font-medium text-[#a39a91]">Choose at least one item</p>
+                    )}
                   </div>
 
                   <div className="flex justify-between">
@@ -618,10 +769,16 @@ export default function BusinessBookingPage() {
                   </div>
 
                   <div className="border-t border-[#eee7df] pt-4 space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-[#8c847c]">Service price</span>
+                    {selectedAddons.map((addon) => (
+                      <div key={`${addon.serviceId}:${addon.id}`} className="flex justify-between gap-3 text-[#756f69]">
+                        <span className="truncate">{addon.name}</span>
+                        <span className="shrink-0 font-semibold text-[#1e1c1a]">₦{addon.price.toLocaleString()}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t border-[#eee7df] pt-2">
+                      <span className="font-semibold text-[#1e1c1a]">Total service price</span>
                       <span className="font-semibold text-[#1e1c1a]">
-                        ₦{(selectedService?.price || 0).toLocaleString()}
+                        ₦{totalServicePrice.toLocaleString()}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -633,7 +790,7 @@ export default function BusinessBookingPage() {
                     <div className="border-t border-[#eee7df] pt-3 flex justify-between items-baseline">
                       <span className="font-semibold text-sm text-[#1e1c1a]">Balance due at business</span>
                       <span className="text-2xl font-bold tracking-tight text-[#d46b4f]">
-                        {formatNairaKobo((selectedService?.price || 0) * 100 - depositPaidKobo)}
+                        {formatNairaKobo(totalServicePrice * 100 - depositPaidKobo)}
                       </span>
                     </div>
                   </div>
@@ -658,7 +815,7 @@ export default function BusinessBookingPage() {
                 {/* Action CTA */}
                 <button
                   type="submit"
-                  disabled={isSubmittingBooking || !selectedService}
+                  disabled={isSubmittingBooking || selectedAddons.length === 0}
                   className="mt-6 w-full inline-flex items-center justify-center gap-2 rounded-full bg-[#1e1c1a] py-4 text-sm font-semibold text-white shadow-md transition hover:bg-[#d46b4f] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSubmittingBooking ? 'Opening Paystack…' : `Pay 30% Deposit · ${formatNairaKobo(depositPaidKobo)}`}
@@ -710,9 +867,15 @@ export default function BusinessBookingPage() {
                   <span className="font-semibold text-[#1e1c1a]">{customerPhone}</span>
                 </div>
 
-                <div className="flex justify-between">
-                  <span className="text-[#8c847c]">Service</span>
-                  <span className="font-semibold text-[#1e1c1a]">{confirmedBooking?.service_name || selectedService.name}</span>
+                <div className="flex justify-between gap-4">
+                  <span className="shrink-0 text-[#8c847c]">Booked items</span>
+                  <span className="text-right font-semibold text-[#1e1c1a]">
+                    {[
+                      confirmedBooking?.service_name ?? selectedAddons[0]?.name,
+                      ...(confirmedBooking?.selected_addons.map((addon) => addon.name) ??
+                        selectedAddons.slice(1).map((addon) => addon.name)),
+                    ].filter(Boolean).join(', ')}
+                  </span>
                 </div>
 
                 <div className="flex justify-between">
@@ -728,9 +891,9 @@ export default function BusinessBookingPage() {
                 </div>
 
                 <div className="flex justify-between border-t border-[#eee7df] pt-3">
-                  <span className="text-[#8c847c]">Service total</span>
+                  <span className="text-[#8c847c]">Total for booked items</span>
                   <span className="font-semibold text-[#1e1c1a]">
-                    ₦{(confirmedBooking?.amount ?? selectedService.price).toLocaleString()}
+                    ₦{(confirmedBooking?.amount ?? totalServicePrice).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -742,7 +905,7 @@ export default function BusinessBookingPage() {
                 <div className="flex justify-between border-t border-[#eee7df] pt-3 text-sm">
                   <span className="font-bold text-[#1e1c1a]">Remaining balance</span>
                   <span className="font-bold text-[#d46b4f]">
-                    {formatNairaKobo((confirmedBooking?.amount ?? selectedService.price) * 100 - (confirmedBooking?.deposit_paid_kobo ?? depositPaidKobo))}
+                    {formatNairaKobo((confirmedBooking?.amount ?? totalServicePrice) * 100 - (confirmedBooking?.deposit_paid_kobo ?? depositPaidKobo))}
                   </span>
                 </div>
               </div>

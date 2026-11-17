@@ -16,6 +16,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+type BookingSelection = { serviceId: string; addonId: string }
+
+function isBookingSelection(value: unknown): value is BookingSelection {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.serviceId === 'string' &&
+    value.serviceId.length > 0 &&
+    value.serviceId.length <= 120 &&
+    typeof value.addonId === 'string' &&
+    value.addonId.length > 0 &&
+    value.addonId.length <= 120
+  )
+}
+
+function parseBookingSelections(value: unknown): BookingSelection[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 10) return null
+
+  const selections: BookingSelection[] = []
+  for (const item of value) {
+    if (!isBookingSelection(item)) return null
+    selections.push(item)
+  }
+
+  const selectionKeys = selections.map((item) => `${item.serviceId}\u0000${item.addonId}`)
+  return new Set(selectionKeys).size === selections.length ? selections : null
+}
+
 export async function POST(request: Request) {
   let body: unknown
   try {
@@ -30,7 +57,7 @@ export async function POST(request: Request) {
 
   const {
     slug,
-    serviceId,
+    items: submittedItems,
     clientName,
     clientPhone,
     clientEmail,
@@ -38,10 +65,11 @@ export async function POST(request: Request) {
     appointmentDate,
     appointmentTime,
   } = body
+  const items = parseBookingSelections(submittedItems)
 
   if (
+    !items ||
     typeof slug !== 'string' || slug.length > 120 ||
-    typeof serviceId !== 'string' || serviceId.length > 120 ||
     typeof clientName !== 'string' || clientName.trim().length < 2 || clientName.length > 120 ||
     typeof clientPhone !== 'string' || clientPhone.trim().length < 5 || clientPhone.length > 40 ||
     typeof clientEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail) || clientEmail.length > 254 ||
@@ -101,21 +129,44 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Paystack checkout currently supports NGN bookings only.' }, { status: 400 })
   }
 
-  const { data: service, error: serviceError } = await supabase
+  const categoryIds = [...new Set(items.map((item) => item.serviceId))]
+  const addonIds = [...new Set(items.map((item) => item.addonId))]
+  const { data: activeCategories, error: categoriesError } = await supabase
     .from('services')
-    .select('name, price')
+    .select('id')
     .eq('business_id', business.business_id)
-    .eq('id', serviceId)
+    .in('id', categoryIds)
     .eq('is_active', true)
-    .maybeSingle()
-  if (serviceError) {
-    return Response.json({ error: 'Could not load the selected service.' }, { status: 500 })
+  if (categoriesError) {
+    return Response.json({ error: 'Could not load the selected categories.' }, { status: 500 })
   }
-  if (!service || !Number.isInteger(service.price) || service.price <= 0) {
-    return Response.json({ error: 'This service is unavailable for online payment.' }, { status: 400 })
+  if ((activeCategories ?? []).length !== categoryIds.length) {
+    return Response.json({ error: 'One or more selected categories are no longer available.' }, { status: 400 })
   }
 
-  const depositPaidKobo = service.price * 30
+  const { data: availableAddons, error: addonsError } = await supabase
+    .from('service_addons')
+    .select('id, service_id, name, price, duration_minutes')
+    .eq('business_id', business.business_id)
+    .in('service_id', categoryIds)
+    .in('id', addonIds)
+    .eq('is_active', true)
+    .gt('price', 0)
+  if (addonsError) {
+    return Response.json({ error: 'Could not load the selected bookable items.' }, { status: 500 })
+  }
+  const availableAddonsByKey = new Map(
+    (availableAddons ?? []).map((addon) => [`${addon.service_id}\u0000${addon.id}`, addon])
+  )
+  const selectedAddons = items.map((item) =>
+    availableAddonsByKey.get(`${item.serviceId}\u0000${item.addonId}`)
+  ).filter((addon): addon is NonNullable<typeof addon> => addon !== undefined)
+  if (selectedAddons.length !== items.length) {
+    return Response.json({ error: 'One or more selected items are no longer available.' }, { status: 400 })
+  }
+
+  const totalPrice = selectedAddons.reduce((total, addon) => total + addon.price, 0)
+  const depositPaidKobo = totalPrice * 30
   const reference = `booka_${crypto.randomUUID()}`
   const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin).replace(/\/+$/, '')
 
@@ -136,7 +187,10 @@ export async function POST(request: Request) {
         metadata: {
           booka_booking: {
             slug,
-            service_id: serviceId,
+            items: items.map((item) => ({
+              service_id: item.serviceId,
+              addon_id: item.addonId,
+            })),
             client_name: clientName.trim(),
             client_phone: clientPhone.trim(),
             client_email: clientEmail.trim(),

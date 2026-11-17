@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  CreditCard,
   ExternalLink,
   Filter,
   Globe,
@@ -42,6 +43,8 @@ import {
 } from 'lucide-react'
 import { Logo } from '@/components/brand/logo'
 import { UsageChart } from '@/components/dashboard/usage-chart'
+import { PaymentsPanel } from '@/components/dashboard/payments-panel'
+import { ServicesPanel } from '@/components/dashboard/services-panel'
 import { INITIAL_SETTINGS } from '@/lib/store'
 import { createSupabaseClient } from '@/lib/supabase'
 import {
@@ -59,7 +62,7 @@ import { cn } from '@/lib/utils'
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<'Overview' | 'Appointments' | 'Services' | 'Clients' | 'Insights' | 'Settings'>('Overview')
+  const [activeTab, setActiveTab] = useState<'Overview' | 'Appointments' | 'Services' | 'Payments' | 'Clients' | 'Insights' | 'Settings'>('Overview')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isBeeping, setIsBeeping] = useState(false)
@@ -73,6 +76,10 @@ export default function DashboardPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [businessSettings, setBusinessSettings] = useState<BusinessSettings>(INITIAL_SETTINGS)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [welcomeOpen, setWelcomeOpen] = useState(false)
+  const [welcomeMessage, setWelcomeMessage] = useState('')
+  const [welcomeError, setWelcomeError] = useState('')
+  const [isDismissingWelcome, setIsDismissingWelcome] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -102,6 +109,24 @@ export default function DashboardPage() {
           return
         }
         if (!active) return
+        try {
+          if (
+            window.sessionStorage.getItem('booka:pending-welcome-user') === user.id &&
+            user.user_metadata.welcome_popup_pending === true
+          ) {
+            const message = user.user_metadata.welcome_message
+            setWelcomeMessage(
+              typeof message === 'string' && message.trim()
+                ? message
+                : 'Your business profile is ready. You can now manage your services, bookings, and clients.'
+            )
+            setWelcomeOpen(true)
+          } else if (window.sessionStorage.getItem('booka:pending-welcome-user') === user.id) {
+            window.sessionStorage.removeItem('booka:pending-welcome-user')
+          }
+        } catch (storageError) {
+          console.error('Could not load the welcome message state:', storageError)
+        }
         setAuthUserId(user.id)
         await loadWorkspace(user.id)
       } catch (error) {
@@ -135,6 +160,7 @@ export default function DashboardPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'businesses', filter: `owner_id=eq.${authUserId}` }, () => { void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments', filter: `business_id=eq.${businessId}` }, () => { triggerBellBeep(); void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'services', filter: `business_id=eq.${businessId}` }, () => { void refresh() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_addons', filter: `business_id=eq.${businessId}` }, () => { void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `business_id=eq.${businessId}` }, () => { void refresh() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `business_id=eq.${businessId}` }, () => { void refresh() })
       .subscribe()
@@ -175,6 +201,32 @@ export default function DashboardPage() {
       setPageError('')
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Could not save notifications.')
+    }
+  }
+
+  const handleDismissWelcome = async () => {
+    setWelcomeError('')
+    setIsDismissingWelcome(true)
+    try {
+      const { error } = await createSupabaseClient().auth.updateUser({
+        data: { welcome_popup_pending: false },
+      })
+      if (error) throw error
+      setWelcomeOpen(false)
+      try {
+        window.sessionStorage.removeItem('booka:pending-welcome-user')
+      } catch (storageError) {
+        console.error('Could not clear the dismissed welcome message:', storageError)
+      }
+    } catch (storageError) {
+      console.error('Could not mark the welcome message as seen in the account:', storageError)
+      setWelcomeError(
+        storageError instanceof Error
+          ? storageError.message
+          : 'Could not save that you have seen the welcome message. Please try again.'
+      )
+    } finally {
+      setIsDismissingWelcome(false)
     }
   }
 
@@ -332,59 +384,83 @@ export default function DashboardPage() {
   // Appointments sub-tab: Management vs Calendar
   const [aptSubTab, setAptSubTab] = useState<'management' | 'calendar'>('management')
   const [calendarDate, setCalendarDate] = useState(new Date())
+  const [selectedCalDay, setSelectedCalDay] = useState<number | null>(null)
 
   // Service management state
   const [showAddServiceModal, setShowAddServiceModal] = useState(false)
   const [newSvcName, setNewSvcName] = useState('')
   const [newSvcDetail, setNewSvcDetail] = useState('')
   const [newSvcCategory, setNewSvcCategory] = useState<'barbing' | 'spa' | 'hair' | 'general'>('hair')
-  const [newSvcDuration, setNewSvcDuration] = useState('60')
-  const [newSvcPrice, setNewSvcPrice] = useState('15000')
-  const [serviceActionId, setServiceActionId] = useState<string | null>(null)
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null)
 
   const handleAddService = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newSvcName) return
+    const name = newSvcName.trim()
+    if (!name) {
+      setPageError('Enter a category name.')
+      return
+    }
 
-    const categoryThemes: Record<string, { color: string; iconColor: string }> = {
+    const categoryThemes: Record<Service['category'], { color: string; iconColor: string }> = {
       barbing: { color: 'bg-[#eee7ff]', iconColor: 'text-[#7253cb]' },
       spa: { color: 'bg-[#ffe7df]', iconColor: 'text-[#d46b4f]' },
       hair: { color: 'bg-[#e7f2ea]', iconColor: 'text-[#528361]' },
       general: { color: 'bg-[#f0ded4]', iconColor: 'text-[#9e503b]' },
     }
 
-    const theme = categoryThemes[newSvcCategory] || categoryThemes.general
+    const theme = categoryThemes[newSvcCategory]
 
-    const created: Service = {
-      id: `srv-${Date.now()}`,
-      name: newSvcName.trim(),
-      detail: newSvcDetail.trim() || 'Professional tailored service',
+    const existingService = services.find((item) => item.id === editingServiceId)
+    const service: Service = {
+      id: editingServiceId ?? `srv-${Date.now()}`,
+      name,
+      detail: newSvcDetail.trim(),
       category: newSvcCategory,
-      durationMinutes: parseInt(newSvcDuration) || 45,
-      price: parseInt(newSvcPrice) || 10000,
+      durationMinutes: 60,
+      price: 0,
       color: theme.color,
       iconColor: theme.iconColor,
-      isActive: true,
+      isActive: existingService?.isActive ?? false,
+      addons: existingService?.addons ?? [],
     }
 
-    persistServices([...services, created])
+    const updatedServices = editingServiceId
+      ? services.map((item) => item.id === editingServiceId ? service : item)
+      : [...services, service]
+    persistServices(updatedServices)
 
-    // Push notification & audio beep
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: 'Service Added',
-      message: `${created.name} added to your business menu.`,
-      time: 'Just now',
-      type: 'alert',
-      read: false,
+    if (!editingServiceId) {
+      const newNotif: NotificationItem = {
+        id: `notif-${Date.now()}`,
+        title: 'Service Added',
+        message: `${service.name} added to your business menu.`,
+        time: 'Just now',
+        type: 'alert',
+        read: false,
+      }
+      persistNotifications([newNotif, ...notifications])
     }
-    persistNotifications([newNotif, ...notifications])
 
     setNewSvcName('')
     setNewSvcDetail('')
-    setNewSvcDuration('60')
-    setNewSvcPrice('15000')
+    setEditingServiceId(null)
     setShowAddServiceModal(false)
+  }
+
+  const handleEditService = (service: Service) => {
+    setEditingServiceId(service.id)
+    setNewSvcName(service.name)
+    setNewSvcDetail(service.detail)
+    setNewSvcCategory(service.category)
+    setShowAddServiceModal(true)
+  }
+
+  const handleStartAddingService = (category: Service['category'] = 'hair', suggestedName = '') => {
+    setEditingServiceId(null)
+    setNewSvcName(suggestedName)
+    setNewSvcDetail('')
+    setNewSvcCategory(category)
+    setShowAddServiceModal(true)
   }
 
   const handleDeleteService = (id: string) => {
@@ -396,19 +472,21 @@ export default function DashboardPage() {
     })
   }
 
-  const handleToggleService = async (service: Service) => {
-    setServiceActionId(service.id)
-    try {
-      await setServiceActive(service.id, businessId, !service.isActive)
-      setServices((current) => current.map((item) =>
-        item.id === service.id ? { ...item, isActive: !service.isActive } : item
-      ))
-      setPageError('')
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'Could not update service availability.')
-    } finally {
-      setServiceActionId(null)
-    }
+  const updateServiceAddons = (
+    serviceId: string,
+    update: (addons: Service['addons']) => Service['addons']
+  ) => {
+    setServices((current) => current.map((service) =>
+      service.id === serviceId ? { ...service, addons: update(service.addons) } : service
+    ))
+  }
+
+  const updateServiceActive = async (serviceId: string, isActive: boolean) => {
+    await setServiceActive(serviceId, businessId, isActive)
+    setServices((current) => current.map((service) =>
+      service.id === serviceId ? { ...service, isActive } : service
+    ))
+    setPageError('')
   }
 
   // Settings feedback
@@ -473,6 +551,7 @@ export default function DashboardPage() {
     { label: 'Overview' as const, icon: LayoutDashboard },
     { label: 'Appointments' as const, icon: CalendarDays },
     { label: 'Services' as const, icon: Layers },
+    { label: 'Payments' as const, icon: CreditCard },
     { label: 'Clients' as const, icon: Users },
     { label: 'Insights' as const, icon: BarChart3 },
     { label: 'Settings' as const, icon: Settings },
@@ -517,13 +596,12 @@ export default function DashboardPage() {
   const calendarMonthName = calendarDate.toLocaleString('en-US', { month: 'long' })
   const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate()
   const firstDayOfWeek = new Date(calendarYear, calendarMonth, 1).getDay() // 0=Sun
-
   const navigateMonth = (delta: number) => {
     setCalendarDate(new Date(calendarYear, calendarMonth + delta, 1))
+    setSelectedCalDay(null)
   }
 
   // Build a mapping of day-number → appointments for the current month
-  const todayStr = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
   const appointmentsByDay: Record<number, Appointment[]> = {}
   appointments.forEach((apt) => {
     // We match appointments either by a date string like "Today", "2024-11-06", or by parsing
@@ -546,8 +624,9 @@ export default function DashboardPage() {
     }
   })
 
-  const [selectedCalDay, setSelectedCalDay] = useState<number | null>(null)
   const selectedDayAppointments = selectedCalDay ? (appointmentsByDay[selectedCalDay] || []) : []
+  const monthlyAppointmentCount = Object.values(appointmentsByDay).reduce((total, dayAppointments) => total + dayAppointments.length, 0)
+  const bookedDayCount = Object.values(appointmentsByDay).filter((dayAppointments) => dayAppointments.length > 0).length
 
   // Three-dot action status modifier: 1. Mark Paid, 2. Archived, 3. Pending, 4. Reject
   const updateAppointmentStatus = (
@@ -575,10 +654,19 @@ export default function DashboardPage() {
   const totalRevenue = appointments
     .filter((a) => a.status !== 'Rejected' && a.status !== 'Archived')
     .reduce((sum, a) => sum + a.amount, 0)
+  const returningClientsPercent = clients.length
+    ? Math.round((clients.filter((client) => client.totalBookings > 1).length / clients.length) * 100)
+    : 0
   const paidCount = appointments.filter((a) => a.status === 'Paid').length
   const confirmedCount = appointments.filter((a) => a.status === 'Confirmed').length
   const pendingCount = appointments.filter((a) => a.status === 'Pending').length
   const unreadNotifsCount = notifications.filter((n) => !n.read).length
+  const publishedBookableItems = services.reduce(
+    (total, service) => total + (service.isActive
+      ? service.addons.filter((addon) => addon.isActive && addon.price > 0).length
+      : 0),
+    0
+  )
 
   if (isLoading) {
     return <main className="grid min-h-screen place-items-center bg-[#f3efe9] text-sm text-[#756f69]">Loading your workspace…</main>
@@ -591,6 +679,41 @@ export default function DashboardPage() {
           <h1 className="text-xl font-semibold">Could not load your workspace</h1>
           <p role="alert" className="mt-3 text-sm text-[#a9432e]">{pageError || 'Please sign in to continue.'}</p>
           <button onClick={() => router.replace('/login')} className="mt-5 rounded-full bg-[#211f1c] px-5 py-3 text-sm font-semibold text-white">Go to login</button>
+        </div>
+      </main>
+    )
+  }
+
+  if (welcomeOpen) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-black/55 px-6 py-10">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="welcome-title"
+          className="w-full max-w-[480px] rounded-[32px] border border-[#e4ddd5] bg-[#fbfaf7] p-8 text-center shadow-[0_24px_80px_rgba(0,0,0,.35)] sm:p-12"
+        >
+          <div className="mx-auto grid size-16 place-items-center rounded-[22px] bg-[#e7f2ea] text-[#528361]">
+            <Check size={28} />
+          </div>
+          <p className="eyebrow mt-6 text-[#528361]">You&apos;re officially in</p>
+          <h1 id="welcome-title" className="mt-3 text-3xl font-medium tracking-[-.06em]">
+            Welcome to Booka.
+          </h1>
+          <p className="mx-auto mt-4 max-w-[380px] leading-7 text-[#756f69]">{welcomeMessage}</p>
+          {welcomeError && (
+            <p role="alert" className="mt-4 rounded-xl bg-[#fff0eb] px-4 py-3 text-sm text-[#a9432e]">
+              {welcomeError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleDismissWelcome()}
+            disabled={isDismissingWelcome}
+            className="mt-7 w-full rounded-full bg-[#1e1c1a] px-6 py-4 text-sm font-semibold text-white transition hover:bg-[#d46b4f] disabled:cursor-wait disabled:opacity-60"
+          >
+            {isDismissingWelcome ? 'Saving…' : 'Continue to Backoffice'}
+          </button>
         </div>
       </main>
     )
@@ -659,7 +782,12 @@ export default function DashboardPage() {
                       )}
                       {label === 'Services' && (
                         <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white">
-                          {services.filter((service) => service.isActive).length}
+                          {publishedBookableItems}
+                        </span>
+                      )}
+                      {label === 'Payments' && (
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white">
+                          {appointments.filter((appointment) => appointment.payment_status === 'paid').length}
                         </span>
                       )}
                     </button>
@@ -730,7 +858,12 @@ export default function DashboardPage() {
                   )}
                   {label === 'Services' && (
                     <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white">
-                      {services.filter((service) => service.isActive).length}
+                      {publishedBookableItems}
+                    </span>
+                  )}
+                  {label === 'Payments' && (
+                    <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      {appointments.filter((appointment) => appointment.payment_status === 'paid').length}
                     </span>
                   )}
                 </button>
@@ -1024,27 +1157,27 @@ export default function DashboardPage() {
                 <div className="rounded-[22px] border border-[#e4ddd5] bg-[#fffdf9] p-5 shadow-sm">
                   <p className="text-xs text-[#8c847c]">Net revenue</p>
                   <p className="mt-2 text-3xl font-medium tracking-[-.06em]">₦{totalRevenue.toLocaleString()}</p>
-                  <p className="mt-2 text-xs font-medium text-[#528361]">↑ 24.8% vs last month</p>
+                  <p className="mt-2 text-xs text-[#8c847c]">From your bookings</p>
                 </div>
                 <div className="rounded-[22px] border border-[#e4ddd5] bg-[#fffdf9] p-5 shadow-sm">
                   <p className="text-xs text-[#8c847c]">Total bookings</p>
-                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">{180 + appointments.length}</p>
-                  <p className="mt-2 text-xs font-medium text-[#528361]">↑ 18.2% this month</p>
+                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">{appointments.length}</p>
+                  <p className="mt-2 text-xs text-[#8c847c]">All bookings</p>
                 </div>
                 <div className="rounded-[22px] border border-[#e4ddd5] bg-[#fffdf9] p-5 shadow-sm">
                   <p className="text-xs text-[#8c847c]">Returning clients</p>
-                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">68%</p>
-                  <p className="mt-2 text-xs font-medium text-[#528361]">↑ 6.4% retention</p>
+                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">{returningClientsPercent}%</p>
+                  <p className="mt-2 text-xs text-[#8c847c]">Clients with multiple bookings</p>
                 </div>
                 <div className="rounded-[22px] border border-[#e4ddd5] bg-[#fffdf9] p-5 shadow-sm">
                   <p className="text-xs text-[#8c847c]">Open slots</p>
-                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">27</p>
-                  <p className="mt-2 text-xs font-medium text-[#8c847c]">Across 3 active services</p>
+                  <p className="mt-2 text-3xl font-medium tracking-[-.06em]">0</p>
+                  <p className="mt-2 text-xs text-[#8c847c]">Availability not configured</p>
                 </div>
               </div>
 
               {/* GSAP Utilization Dynamic Bar Chart */}
-              <UsageChart />
+              <UsageChart appointments={appointments} />
 
               {/* Today's Schedule & Revenue Mix */}
               <div className="grid min-w-0 gap-5 xl:grid-cols-[1.35fr_.65fr]">
@@ -1384,201 +1517,232 @@ export default function DashboardPage() {
 
               {/* ──── SUB-TAB 2: DYNAMIC BOOKING CALENDAR ──── */}
               {aptSubTab === 'calendar' && (
-              <div className="space-y-5">
-                <div className="min-w-0 rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-3 shadow-sm sm:p-6 md:p-8">
-                  {/* Calendar Header with Month Navigation */}
-                  <div className="flex flex-col items-start gap-4 border-b border-[#eee7df] pb-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="overflow-hidden rounded-[30px] border border-[#e5ddd4] bg-[#fffdf9] shadow-[0_24px_70px_rgba(54,41,31,.08)]">
+                <div className="relative isolate overflow-hidden bg-gradient-to-br from-[#211f1c] via-[#30251f] to-[#633d30] px-5 py-6 text-white sm:px-8 sm:py-8">
+                  <div aria-hidden="true" className="absolute -right-10 -top-24 -z-10 size-64 rounded-full bg-[#d46b4f]/25 blur-3xl" />
+                  <div aria-hidden="true" className="absolute -bottom-28 right-1/3 -z-10 size-56 rounded-full bg-[#efb49f]/10 blur-3xl" />
+                  <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <h2 className="text-2xl font-semibold tracking-[-.04em]">Booking Calendar</h2>
-                      <p className="mt-1 text-xs text-[#8c847c]">
-                        Visual overview of all scheduled bookings. Click a day to see details.
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[.18em] text-[#efb49f]">
+                        <CalendarDays size={13} /> Your schedule
+                      </span>
+                      <h2 className="mt-4 text-3xl font-medium tracking-[-.06em] sm:text-4xl">Booking Calendar</h2>
+                      <p className="mt-2 max-w-md text-xs leading-5 text-white/60 sm:text-sm">
+                        A clear view of your bookings, all month long.
                       </p>
                     </div>
-                    <div className="flex w-full items-center justify-between gap-1 sm:w-auto sm:gap-2">
+
+                    <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[.07] p-2 sm:min-w-[290px]">
                       <button
                         type="button"
                         onClick={() => navigateMonth(-1)}
-                        className="grid size-9 place-items-center rounded-full border border-[#ded8cf] text-[#756f69] hover:bg-[#f1ece5] transition"
+                        className="grid size-10 shrink-0 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white"
                         aria-label="Previous month"
                       >
-                        <ChevronLeft size={16} />
+                        <ChevronLeft size={18} />
                       </button>
-                      <span className="min-w-0 flex-1 text-center text-xs font-semibold sm:min-w-[140px] sm:flex-none sm:text-sm">
+                      <span className="min-w-0 flex-1 text-center text-sm font-semibold sm:text-base">
                         {calendarMonthName} {calendarYear}
                       </span>
                       <button
                         type="button"
                         onClick={() => navigateMonth(1)}
-                        className="grid size-9 place-items-center rounded-full border border-[#ded8cf] text-[#756f69] hover:bg-[#f1ece5] transition"
+                        className="grid size-10 shrink-0 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white"
                         aria-label="Next month"
                       >
-                        <ChevronRight size={16} />
+                        <ChevronRight size={18} />
                       </button>
                       <button
                         type="button"
-                        onClick={() => setCalendarDate(new Date())}
-                        className="ml-1 shrink-0 rounded-full border border-[#ded8cf] px-2.5 py-1.5 text-[10px] font-semibold text-[#1e1c1a] hover:bg-[#f1ece5] transition sm:ml-2 sm:px-3 sm:text-[11px]"
+                        onClick={() => {
+                          setCalendarDate(new Date())
+                          setSelectedCalDay(null)
+                        }}
+                        className="shrink-0 rounded-xl bg-[#d46b4f] px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-[#e17c5e]"
                       >
                         Today
                       </button>
                     </div>
                   </div>
 
-                  {/* Weekday Headers */}
-                  <div className="mt-5 grid grid-cols-7 gap-0.5 text-center text-[9px] font-bold uppercase tracking-wider text-[#8c847c] sm:gap-1 sm:text-[10px]">
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                      <div key={d} className="py-2">{d}</div>
-                    ))}
-                  </div>
-
-                  {/* Calendar Grid */}
-                  <div className="mt-1 grid grid-cols-7 gap-0.5 sm:gap-1">
-                    {/* Empty cells for days before the 1st */}
-                    {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-                      <div key={`empty-${i}`} className="aspect-square" />
-                    ))}
-
-                    {/* Day cells */}
-                    {Array.from({ length: daysInMonth }).map((_, i) => {
-                      const day = i + 1
-                      const dayApts = appointmentsByDay[day] || []
-                      const isToday =
-                        day === new Date().getDate() &&
-                        calendarMonth === new Date().getMonth() &&
-                        calendarYear === new Date().getFullYear()
-                      const isSelected = selectedCalDay === day
-                      const hasBookings = dayApts.length > 0
-
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          onClick={() => setSelectedCalDay(isSelected ? null : day)}
-                          className={cn(
-                            'relative aspect-square min-w-0 rounded-lg border text-[11px] font-medium transition-all flex flex-col items-center justify-center gap-0.5 sm:rounded-2xl sm:text-xs',
-                            isSelected
-                              ? 'border-[#d46b4f] bg-[#d46b4f]/10 shadow-md ring-1 ring-[#d46b4f]/30'
-                              : isToday
-                                ? 'border-[#d46b4f]/40 bg-[#fdf0ec]'
-                                : hasBookings
-                                  ? 'border-[#e5ddd4] bg-[#f8f5f0] hover:border-[#d46b4f]/50 hover:shadow-sm'
-                                  : 'border-transparent hover:bg-[#f8f5f0]'
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'text-xs font-semibold sm:text-sm',
-                              isToday ? 'text-[#d46b4f]' : 'text-[#1e1c1a]',
-                              isSelected && 'text-[#d46b4f]'
-                            )}
-                          >
-                            {day}
-                          </span>
-
-                          {hasBookings && (
-                            <div className="flex items-center gap-0.5">
-                              {dayApts.length <= 3 ? (
-                                dayApts.map((a, idx) => (
-                                  <span
-                                    key={idx}
-                                    className={cn(
-                                      'size-1.5 rounded-full',
-                                      a.status === 'Paid' || a.status === 'Confirmed'
-                                        ? 'bg-[#528361]'
-                                        : a.status === 'Pending'
-                                          ? 'bg-[#d4a74f]'
-                                          : a.status === 'Rejected'
-                                            ? 'bg-[#d46b4f]'
-                                            : 'bg-[#8c847c]'
-                                    )}
-                                  />
-                                ))
-                              ) : (
-                                <span className="text-[9px] font-bold text-[#d46b4f]">{dayApts.length}</span>
-                              )}
-                            </div>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {/* Legend */}
-                  <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-[#eee7df] pt-4 text-[10px] text-[#8c847c]">
-                    <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#528361]" /> Paid / Confirmed</div>
-                    <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#d4a74f]" /> Pending</div>
-                    <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#d46b4f]" /> Rejected</div>
-                    <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#8c847c]" /> Archived</div>
+                  <div className="mt-6 flex flex-wrap gap-2">
+                    <div className="min-w-[132px] rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3">
+                      <p className="text-2xl font-semibold tracking-tight">{monthlyAppointmentCount}</p>
+                      <p className="mt-0.5 text-[10px] font-medium text-white/55">Bookings this month</p>
+                    </div>
+                    <div className="min-w-[132px] rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3">
+                      <p className="text-2xl font-semibold tracking-tight">{bookedDayCount}</p>
+                      <p className="mt-0.5 text-[10px] font-medium text-white/55">Days with bookings</p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Selected Day Drawer */}
-                {selectedCalDay !== null && (
-                  <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 shadow-sm animate-in slide-in-from-top-2">
-                    <div className="flex items-center justify-between border-b border-[#eee7df] pb-4">
-                      <div>
-                        <p className="eyebrow text-[#d46b4f]">
-                          {calendarMonthName} {selectedCalDay}, {calendarYear}
-                        </p>
-                        <h3 className="mt-1 text-lg font-semibold tracking-[-.03em]">
-                          {selectedDayAppointments.length === 0
-                            ? 'No bookings scheduled'
-                            : `${selectedDayAppointments.length} booking${selectedDayAppointments.length > 1 ? 's' : ''} scheduled`}
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCalDay(null)}
-                        className="grid size-8 place-items-center rounded-full text-[#8c847c] hover:bg-[#f1ece5] transition"
-                      >
-                        <X size={16} />
-                      </button>
+                <div className="grid gap-5 p-3 sm:p-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(280px,.8fr)] lg:gap-6 lg:p-7">
+                  <div className="min-w-0 rounded-[24px] border border-[#eee7df] bg-white p-3 sm:p-5">
+                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] font-bold uppercase tracking-[.14em] text-[#a39a91] sm:gap-2 sm:text-[10px]">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((weekday) => (
+                        <div key={weekday} className="py-2.5">{weekday}</div>
+                      ))}
                     </div>
 
-                    {selectedDayAppointments.length > 0 ? (
-                      <div className="mt-4 grid gap-3">
-                        {selectedDayAppointments.map((apt) => (
-                          <div
-                            key={apt.id}
-                            className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl border border-[#eee7df] bg-[#fbfaf7] p-3 transition hover:border-[#caa08f] sm:flex-nowrap sm:gap-4 sm:p-4"
+                    <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                      {Array.from({ length: firstDayOfWeek }).map((_, index) => (
+                        <div key={`empty-${index}`} className="aspect-square" aria-hidden="true" />
+                      ))}
+
+                      {Array.from({ length: daysInMonth }).map((_, index) => {
+                        const day = index + 1
+                        const dayAppointments = appointmentsByDay[day] || []
+                        const isToday =
+                          day === new Date().getDate() &&
+                          calendarMonth === new Date().getMonth() &&
+                          calendarYear === new Date().getFullYear()
+                        const isSelected = selectedCalDay === day
+                        const hasBookings = dayAppointments.length > 0
+
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() => setSelectedCalDay(isSelected ? null : day)}
+                            aria-pressed={isSelected}
+                            aria-label={`${calendarMonthName} ${day}${hasBookings ? `, ${dayAppointments.length} booking${dayAppointments.length === 1 ? '' : 's'}` : ', no bookings'}`}
+                            className={cn(
+                              'group relative flex aspect-square min-w-0 flex-col items-center justify-center gap-1 rounded-xl border text-xs transition-all sm:gap-1.5 sm:rounded-2xl',
+                              isSelected
+                                ? 'border-[#d46b4f] bg-[#d46b4f] text-white shadow-[0_8px_20px_rgba(212,107,79,.28)]'
+                                : isToday
+                                  ? 'border-[#d46b4f]/30 bg-[#fff6f2] text-[#d46b4f] hover:border-[#d46b4f]'
+                                  : hasBookings
+                                    ? 'border-[#eee7df] bg-[#fbfaf7] text-[#1e1c1a] hover:border-[#d46b4f]/50 hover:bg-[#fff8f5]'
+                                    : 'border-transparent text-[#5e5852] hover:border-[#eee7df] hover:bg-[#fbfaf7]'
+                            )}
                           >
-                            <span className="w-14 shrink-0 font-mono text-xs font-medium text-[#998f85]">{apt.time}</span>
-                            <div className="grid size-10 shrink-0 place-items-center rounded-full bg-[#f0ded4] text-xs font-semibold text-[#9e503b]">
-                              {apt.clientName.split(' ').map((p) => p[0]).join('')}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-semibold">{apt.clientName}</p>
-                              <p className="truncate text-xs text-[#998f85]">{apt.serviceName}</p>
-                            </div>
-                            <div className="ml-auto shrink-0 text-right">
-                              <p className="text-sm font-semibold">₦{apt.amount.toLocaleString()}</p>
-                              <span
-                                className={cn(
-                                  'mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase',
-                                  apt.status === 'Paid' && 'bg-[#e7f2ea] text-[#528361]',
-                                  apt.status === 'Confirmed' && 'bg-[#e7f2ea] text-[#528361]',
-                                  apt.status === 'Pending' && 'bg-[#fff0d7] text-[#a47328]',
-                                  apt.status === 'Archived' && 'bg-[#eee7df] text-[#756f69]',
-                                  apt.status === 'Rejected' && 'bg-[#ffe7df] text-[#d46b4f]'
-                                )}
-                              >
-                                {apt.status}
+                            {isToday && (
+                              <span className={cn(
+                                'absolute right-1.5 top-1.5 size-1.5 rounded-full sm:right-2 sm:top-2',
+                                isSelected ? 'bg-white/80' : 'bg-[#d46b4f]'
+                              )} />
+                            )}
+                            <span className="text-sm font-semibold sm:text-base">{day}</span>
+                            {hasBookings ? (
+                              <span className={cn(
+                                'rounded-full px-1.5 py-0.5 text-[8px] font-bold leading-none sm:px-2 sm:text-[9px]',
+                                isSelected ? 'bg-white/20 text-white' : 'bg-[#e7f2ea] text-[#528361]'
+                              )}>
+                                {dayAppointments.length} <span className="hidden sm:inline">booked</span>
                               </span>
-                            </div>
+                            ) : (
+                              <span className="h-3 text-[8px] leading-3 text-transparent" aria-hidden="true">—</span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t border-[#eee7df] pt-4 text-[10px] text-[#756f69]">
+                      <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#528361]" /> Has bookings</div>
+                      <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#d46b4f]" /> Today</div>
+                    </div>
+                  </div>
+
+                  <aside className="flex min-h-[300px] flex-col overflow-hidden rounded-[24px] border border-[#eee7df] bg-[#fbfaf7]">
+                    {selectedCalDay !== null ? (
+                      <>
+                        <div className="flex items-start justify-between gap-3 bg-[#f1e8e1] px-5 py-5 sm:px-6">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[.17em] text-[#a16a55]">
+                              {new Date(calendarYear, calendarMonth, selectedCalDay).toLocaleDateString('en-US', { weekday: 'long' })}
+                            </p>
+                            <p className="mt-1 text-2xl font-semibold tracking-[-.05em] text-[#27221f]">
+                              {calendarMonthName} {selectedCalDay}
+                            </p>
+                            <p className="mt-1 text-xs text-[#8c756a]">
+                              {selectedDayAppointments.length === 0
+                                ? 'A little breathing room in your day'
+                                : `${selectedDayAppointments.length} appointment${selectedDayAppointments.length === 1 ? '' : 's'} on your schedule`}
+                            </p>
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-6 flex flex-col items-center justify-center py-8 text-center">
-                        <div className="grid size-14 place-items-center rounded-2xl bg-[#f1ece5]">
-                          <CalendarDays size={24} className="text-[#8c847c]" />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCalDay(null)}
+                            aria-label="Close selected day"
+                            className="grid size-8 shrink-0 place-items-center rounded-full bg-white/70 text-[#8c7569] transition hover:bg-white hover:text-[#1e1c1a]"
+                          >
+                            <X size={15} />
+                          </button>
                         </div>
-                        <p className="mt-3 text-sm font-semibold text-[#756f69]">No appointments</p>
-                        <p className="mt-1 text-xs text-[#8c847c]">This day is clear — perfect for catching up or walk-ins.</p>
+
+                        {selectedDayAppointments.length > 0 ? (
+                          <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+                            {selectedDayAppointments.map((appointment) => (
+                              <div
+                                key={appointment.id}
+                                className="rounded-2xl border border-[#eee7df] bg-white p-4 transition hover:border-[#d9c2b6] hover:shadow-sm"
+                              >
+                                <div className="flex items-start gap-3">
+                                  <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#f8eee9] text-xs font-bold text-[#a4553f]">
+                                    {appointment.clientName.split(' ').map((part) => part[0]).join('')}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-semibold text-[#292521]">{appointment.clientName}</p>
+                                    <p className="mt-0.5 truncate text-xs text-[#8c847c]">{appointment.serviceName}</p>
+                                  </div>
+                                </div>
+                                <div className="mt-4 flex items-center justify-between border-t border-[#f1ece5] pt-3">
+                                  <span className="flex items-center gap-1.5 text-xs font-medium text-[#756f69]">
+                                    <Clock size={13} className="text-[#d46b4f]" /> {appointment.time}
+                                  </span>
+                                  <span className="text-xs font-semibold text-[#292521]">₦{appointment.amount.toLocaleString()}</span>
+                                </div>
+                                <span
+                                  className={cn(
+                                    'mt-3 inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider',
+                                    appointment.status === 'Paid' && 'bg-[#e7f2ea] text-[#528361]',
+                                    appointment.status === 'Confirmed' && 'bg-[#e7f2ea] text-[#528361]',
+                                    appointment.status === 'Pending' && 'bg-[#fff0d7] text-[#a47328]',
+                                    appointment.status === 'Archived' && 'bg-[#eee7df] text-[#756f69]',
+                                    appointment.status === 'Rejected' && 'bg-[#ffe7df] text-[#d46b4f]'
+                                  )}
+                                >
+                                  {appointment.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                            <span className="grid size-14 place-items-center rounded-2xl bg-white text-[#c18a72] shadow-sm">
+                              <CalendarDays size={23} />
+                            </span>
+                            <p className="mt-4 text-sm font-semibold text-[#4c443e]">No bookings yet</p>
+                            <p className="mt-1 max-w-[220px] text-xs leading-5 text-[#968b82]">
+                              This day is open. Your appointments will appear here as they come in.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex flex-1 flex-col justify-between p-5 sm:p-6">
+                        <div>
+                          <span className="grid size-12 place-items-center rounded-2xl bg-[#f1e8e1] text-[#b66b50]">
+                            <CalendarDays size={21} />
+                          </span>
+                          <p className="mt-5 text-[10px] font-bold uppercase tracking-[.17em] text-[#b16e55]">Day planner</p>
+                          <h3 className="mt-2 text-xl font-semibold tracking-[-.04em] text-[#292521]">Your next detail is one tap away.</h3>
+                          <p className="mt-2 text-xs leading-5 text-[#8c847c]">
+                            Select any date to see who is coming in, what they booked, and when they arrive.
+                          </p>
+                        </div>
+                        <div className="mt-6 rounded-2xl border border-[#eee7df] bg-white p-4">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39a91]">This month</p>
+                          <p className="mt-1 text-2xl font-semibold tracking-tight text-[#292521]">{monthlyAppointmentCount} <span className="text-sm font-medium text-[#8c847c]">bookings</span></p>
+                          <p className="mt-1 text-xs text-[#8c847c]">Across {bookedDayCount} {bookedDayCount === 1 ? 'day' : 'days'}</p>
+                        </div>
                       </div>
                     )}
-                  </div>
-                )}
+                  </aside>
+                </div>
               </div>
               )}
             </div>
@@ -1589,131 +1753,34 @@ export default function DashboardPage() {
           {/* ============================================================== */}
           {activeTab === 'Services' && (
             <div className="space-y-6">
-              <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 md:p-8 shadow-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#eee7df] pb-6">
-                  <div>
-                    <h2 className="text-2xl font-semibold tracking-[-.04em]">Service Menu & Offerings</h2>
-                    <p className="mt-1 text-xs text-[#8c847c]">
-                      Add, customize, and manage the services your clients can book.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddServiceModal(true)}
-                    className="inline-flex items-center gap-2 rounded-full bg-[#1e1c1a] px-5 py-2.5 text-xs font-semibold text-white transition hover:bg-[#d46b4f]"
-                  >
-                    <Plus size={14} /> Add new service
-                  </button>
-                </div>
+              <ServicesPanel
+                services={services}
+                businessId={businessId}
+                onAddService={handleStartAddingService}
+                onEditService={handleEditService}
+                onDeleteService={handleDeleteService}
+                onUpdateServiceActive={updateServiceActive}
+                onUpdateAddons={updateServiceAddons}
+                onError={setPageError}
+              />
 
-                {/* Metric Summary Bar */}
-                <div className="mt-6 grid gap-4 grid-cols-2 lg:grid-cols-3">
-                  <div className="rounded-2xl bg-[#f8f5f0] border border-[#eee7df] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8c847c]">Active Services</p>
-                    <p className="mt-1 text-2xl font-medium tracking-tight text-[#1e1c1a]">
-                      {services.filter((service) => service.isActive).length}
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#528361]">Available in customer catalog</p>
-                  </div>
-                  <div className="rounded-2xl bg-[#f8f5f0] border border-[#eee7df] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8c847c]">Avg Ticket Value</p>
-                    <p className="mt-1 text-2xl font-medium tracking-tight text-[#1e1c1a]">
-                      ₦{Math.round(
-                        services.filter((service) => service.isActive)
-                          .reduce((acc, service) => acc + service.price, 0) /
-                        (services.filter((service) => service.isActive).length || 1)
-                      ).toLocaleString()}
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#8c847c]">Across all offerings</p>
-                  </div>
-                  <div className="col-span-2 lg:col-span-1 rounded-2xl bg-[#f8f5f0] border border-[#eee7df] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#8c847c]">Service Categories</p>
-                    <p className="mt-1 text-2xl font-medium tracking-tight text-[#1e1c1a]">
-                      {new Set(services.filter((service) => service.isActive).map((service) => service.category)).size} Categories
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#8c847c]">Barbing, Spa, Hair & more</p>
-                  </div>
-                </div>
-
-                {/* Services Cards Grid */}
-                <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {services.map((svc) => (
-                    <div
-                      key={svc.id}
-                      className="group flex flex-col justify-between rounded-2xl border border-[#eee7df] bg-[#fffdf9] p-5 transition hover:border-[#caa08f] hover:shadow-sm"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-3">
-                          <span
-                            className={cn(
-                              'inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase',
-                              svc.color,
-                              svc.iconColor
-                            )}
-                          >
-                            {svc.category}
-                          </span>
-                          <span className={cn(
-                            'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase',
-                            svc.isActive ? 'bg-[#e7f2ea] text-[#528361]' : 'bg-[#eee7df] text-[#756f69]'
-                          )}>
-                            {svc.isActive ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
-
-                        <h3 className="mt-3 text-base font-semibold text-[#1e1c1a]">{svc.name}</h3>
-                        <p className="mt-1 text-xs text-[#756f69] leading-relaxed">{svc.detail}</p>
-                      </div>
-
-                      <div className="mt-5 flex items-center justify-between border-t border-[#eee7df] pt-3 text-xs">
-                        <span className="flex items-center gap-1.5 text-[#8c847c]">
-                          <Clock size={13} /> {svc.durationMinutes} mins
-                        </span>
-                        <span className="font-semibold text-sm text-[#1e1c1a]">
-                          ₦{svc.price.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="mt-4 flex gap-2">
-                        <button
-                          type="button"
-                          disabled={serviceActionId === svc.id}
-                          onClick={() => void handleToggleService(svc)}
-                          className={cn(
-                            'flex-1 rounded-full py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                            svc.isActive
-                              ? 'border border-[#ded8cf] text-[#756f69] hover:bg-[#f1ece5]'
-                              : 'bg-[#1e1c1a] text-white hover:bg-[#d46b4f]'
-                          )}
-                        >
-                          {serviceActionId === svc.id ? 'Saving…' : svc.isActive ? 'Disable' : 'Enable'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteService(svc.id)}
-                          className="rounded-full border border-[#ded8cf] px-3 text-[#8c847c] hover:bg-[#ffe7df] hover:text-[#d46b4f] transition"
-                          title="Delete service"
-                          aria-label={`Delete ${svc.name}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Add Service Modal */}
+              {/* Add or edit service modal */}
               {showAddServiceModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
                   <div className="w-full max-w-md rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-6 shadow-2xl">
                     <div className="flex items-center justify-between border-b border-[#eee7df] pb-3">
                       <div>
-                        <h3 className="text-xl font-semibold tracking-[-.04em]">Add new service</h3>
-                        <p className="text-xs text-[#8c847c]">Expand your business catalog with new offerings</p>
+                        <h3 className="text-xl font-semibold tracking-[-.04em]">
+                          {editingServiceId ? 'Edit category' : 'Add category'}
+                        </h3>
+                        <p className="text-xs text-[#8c847c]">Categories group the bookable items you add below.</p>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setShowAddServiceModal(false)}
+                        onClick={() => {
+                          setShowAddServiceModal(false)
+                          setEditingServiceId(null)
+                        }}
                         className="rounded-full p-1.5 text-[#8c847c] hover:bg-[#f1ece5]"
                       >
                         <X size={18} />
@@ -1722,55 +1789,27 @@ export default function DashboardPage() {
 
                     <form onSubmit={handleAddService} className="mt-5 flex flex-col gap-4">
                       <label className="field">
-                        Service name
+                        Category name
                         <input
                           required
                           value={newSvcName}
                           onChange={(e) => setNewSvcName(e.target.value)}
-                          placeholder="e.g. Deluxe Beard Grooming"
+                          placeholder="e.g. Barbing"
                         />
                       </label>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className="field">
-                          Category
-                          <select
-                            value={newSvcCategory}
-                            onChange={(e) => setNewSvcCategory(e.target.value as any)}
-                            className="w-full rounded-xl border border-[#ded8cf] bg-white px-4 py-3 text-sm outline-none"
-                          >
-                            <option value="hair">Hair dressing</option>
-                            <option value="barbing">Barbing</option>
-                            <option value="spa">Spa</option>
-                            <option value="general">General</option>
-                          </select>
-                        </label>
-
-                        <label className="field">
-                          Duration (minutes)
-                          <select
-                            value={newSvcDuration}
-                            onChange={(e) => setNewSvcDuration(e.target.value)}
-                            className="w-full rounded-xl border border-[#ded8cf] bg-white px-4 py-3 text-sm outline-none"
-                          >
-                            <option value="30">30 mins</option>
-                            <option value="45">45 mins</option>
-                            <option value="60">60 mins</option>
-                            <option value="90">90 mins</option>
-                            <option value="120">120 mins</option>
-                          </select>
-                        </label>
-                      </div>
-
                       <label className="field">
-                        Price (₦)
-                        <input
-                          type="number"
-                          required
-                          value={newSvcPrice}
-                          onChange={(e) => setNewSvcPrice(e.target.value)}
-                          placeholder="15000"
-                        />
+                        Category type
+                        <select
+                          value={newSvcCategory}
+                          onChange={(e) => setNewSvcCategory(e.target.value as Service['category'])}
+                          className="w-full rounded-xl border border-[#ded8cf] bg-white px-4 py-3 text-sm outline-none"
+                        >
+                          <option value="hair">Hair dressing</option>
+                          <option value="barbing">Barbing</option>
+                          <option value="spa">Spa</option>
+                          <option value="general">General</option>
+                        </select>
                       </label>
 
                       <label className="field">
@@ -1785,7 +1824,10 @@ export default function DashboardPage() {
                       <div className="mt-4 flex gap-3">
                         <button
                           type="button"
-                          onClick={() => setShowAddServiceModal(false)}
+                          onClick={() => {
+                            setShowAddServiceModal(false)
+                            setEditingServiceId(null)
+                          }}
                           className="flex-1 rounded-full border border-[#ded8cf] py-3 text-sm font-semibold text-[#1e1c1a] hover:bg-[#f8f5f0]"
                         >
                           Cancel
@@ -1794,7 +1836,7 @@ export default function DashboardPage() {
                           type="submit"
                           className="flex-1 rounded-full bg-[#1e1c1a] py-3 text-sm font-semibold text-white transition hover:bg-[#d46b4f]"
                         >
-                          Save & Add to Menu
+                          {editingServiceId ? 'Save category' : 'Save category'}
                         </button>
                       </div>
                     </form>
@@ -1803,6 +1845,8 @@ export default function DashboardPage() {
               )}
             </div>
           )}
+
+          {activeTab === 'Payments' && <PaymentsPanel appointments={appointments} />}
 
           {/* ============================================================== */}
           {/* TAB 3: CLIENTS DIRECTORY                                       */}
@@ -1918,8 +1962,8 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="mt-8">
-                  <h3 className="text-base font-semibold">Quarterly Booking Saturation</h3>
-                  <UsageChart />
+                  <h3 className="text-base font-semibold">Booking activity</h3>
+                  <UsageChart appointments={appointments} />
                 </div>
               </div>
             </div>

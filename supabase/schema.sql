@@ -18,6 +18,16 @@ create table if not exists public.businesses (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.signup_confirmation_links (
+  auth_user_id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  sent_at timestamptz not null
+);
+
+alter table public.signup_confirmation_links enable row level security;
+revoke all on public.signup_confirmation_links from public, anon, authenticated;
+grant select on public.signup_confirmation_links to service_role;
+
 create table if not exists public.services (
   id text not null,
   business_id text not null references public.businesses(business_id) on delete cascade,
@@ -33,7 +43,33 @@ create table if not exists public.services (
 );
 
 alter table public.services
-  add column if not exists is_active boolean not null default true;
+  add column if not exists is_active boolean not null default false;
+
+alter table public.services
+  alter column is_active set default false;
+
+alter table public.services
+  drop constraint if exists services_are_categories_only;
+
+update public.services
+set price = 0;
+
+alter table public.services
+  add constraint services_are_categories_only check (price = 0);
+
+create table if not exists public.service_addons (
+  id text not null,
+  business_id text not null,
+  service_id text not null,
+  name text not null,
+  price integer not null check (price >= 0),
+  duration_minutes integer not null default 0 check (duration_minutes >= 0),
+  is_active boolean not null default false,
+  created_at timestamptz not null default now(),
+  primary key (business_id, service_id, id),
+  foreign key (business_id, service_id)
+    references public.services (business_id, id) on delete cascade
+);
 
 create table if not exists public.appointments (
   id text primary key,
@@ -47,6 +83,7 @@ create table if not exists public.appointments (
   appointment_time text not null,
   appointment_date date not null,
   amount integer not null check (amount >= 0),
+  selected_addons jsonb not null default '[]'::jsonb,
   status text not null check (status in ('Paid', 'Confirmed', 'Pending', 'Archived', 'Rejected')),
   created_at timestamptz not null default now()
 );
@@ -81,10 +118,11 @@ create index if not exists notifications_business_created_idx
 
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.businesses, public.services,
-  public.appointments, public.clients, public.notifications to authenticated;
+  public.service_addons, public.appointments, public.clients, public.notifications to authenticated;
 
 alter table public.businesses enable row level security;
 alter table public.services enable row level security;
+alter table public.service_addons enable row level security;
 alter table public.appointments enable row level security;
 alter table public.clients enable row level security;
 alter table public.notifications enable row level security;
@@ -105,6 +143,18 @@ create policy "Owners manage their services" on public.services
   with check (exists (
     select 1 from public.businesses b
     where b.business_id = services.business_id and b.owner_id = (select auth.uid())
+  ));
+
+drop policy if exists "Owners manage their service add-ons" on public.service_addons;
+create policy "Owners manage their service add-ons" on public.service_addons
+  for all to authenticated
+  using (exists (
+    select 1 from public.businesses b
+    where b.business_id = service_addons.business_id and b.owner_id = (select auth.uid())
+  ))
+  with check (exists (
+    select 1 from public.businesses b
+    where b.business_id = service_addons.business_id and b.owner_id = (select auth.uid())
   ));
 
 drop policy if exists "Owners manage their appointments" on public.appointments;
@@ -182,16 +232,16 @@ begin
     service_index := service_index + 1;
     case selected_service
       when 'Barbing' then
-        service_category := 'barbing'; service_price := 8500; service_duration := 45;
+        service_category := 'barbing'; service_price := 0; service_duration := 45;
         service_color := 'bg-[#eee7ff]'; service_icon_color := 'text-[#7253cb]';
       when 'Spa' then
-        service_category := 'spa'; service_price := 12000; service_duration := 60;
+        service_category := 'spa'; service_price := 0; service_duration := 60;
         service_color := 'bg-[#ffe7df]'; service_icon_color := 'text-[#d46b4f]';
       when 'Hair dressing' then
-        service_category := 'hair'; service_price := 18500; service_duration := 90;
+        service_category := 'hair'; service_price := 0; service_duration := 90;
         service_color := 'bg-[#e7f2ea]'; service_icon_color := 'text-[#528361]';
       else
-        service_category := 'general'; service_price := 10000; service_duration := 60;
+        service_category := 'general'; service_price := 0; service_duration := 60;
         service_color := 'bg-[#f0ded4]'; service_icon_color := 'text-[#9e503b]';
     end case;
 
@@ -207,7 +257,7 @@ begin
       service_price,
       service_color,
       service_icon_color,
-      true
+      false
     );
   end loop;
 
@@ -226,9 +276,9 @@ begin
     catalog.icon_color,
     false
   from (values
-    ('Barbing', 'Sharp fades & clean cuts', 'barbing', 45, 8500, 'bg-[#eee7ff]', 'text-[#7253cb]'),
-    ('Spa', 'Slow down & feel good', 'spa', 60, 12000, 'bg-[#ffe7df]', 'text-[#d46b4f]'),
-    ('Hair dressing', 'Your look, your way', 'hair', 90, 18500, 'bg-[#e7f2ea]', 'text-[#528361]')
+    ('Barbing', 'Sharp fades & clean cuts', 'barbing', 45, 0, 'bg-[#eee7ff]', 'text-[#7253cb]'),
+    ('Spa', 'Slow down & feel good', 'spa', 60, 0, 'bg-[#ffe7df]', 'text-[#d46b4f]'),
+    ('Hair dressing', 'Your look, your way', 'hair', 90, 0, 'bg-[#e7f2ea]', 'text-[#528361]')
   ) as catalog(name, detail, category, duration_minutes, price, color, icon_color)
   where not exists (
     select 1 from public.services s
@@ -242,6 +292,7 @@ $$;
 alter table public.appointments
   add column if not exists paystack_reference text,
   add column if not exists deposit_paid_kobo integer not null default 0,
+  add column if not exists selected_addons jsonb not null default '[]'::jsonb,
   add column if not exists payment_status text not null default 'unpaid'
     check (payment_status in ('unpaid', 'paid'));
 
@@ -249,9 +300,15 @@ create unique index if not exists appointments_paystack_reference_uidx
   on public.appointments (paystack_reference)
   where paystack_reference is not null;
 
+drop function if exists public.create_paid_public_booking(
+  text, text, text, text, text, text, date, text, text, integer
+);
+drop function if exists public.create_paid_public_booking(
+  text, text, text, text, text, text, date, text, text, integer, text[]
+);
+
 create or replace function public.create_paid_public_booking(
   p_slug text,
-  p_service_id text,
   p_client_name text,
   p_client_phone text,
   p_client_email text,
@@ -259,7 +316,8 @@ create or replace function public.create_paid_public_booking(
   p_appointment_date date,
   p_appointment_time text,
   p_paystack_reference text,
-  p_deposit_paid_kobo integer
+  p_deposit_paid_kobo integer,
+  p_bookable_items jsonb
 )
 returns jsonb
 language plpgsql
@@ -268,9 +326,13 @@ set search_path = ''
 as $$
 declare
   business_row public.businesses%rowtype;
-  service_row public.services%rowtype;
   appointment_row public.appointments%rowtype;
   client_id text;
+  item_count bigint := 0;
+  item_snapshot jsonb := '[]'::jsonb;
+  primary_category_id text;
+  primary_item_name text;
+  total_price integer;
 begin
   if length(trim(coalesce(p_client_name, ''))) < 2
     or length(trim(coalesce(p_client_name, ''))) > 120
@@ -292,6 +354,28 @@ begin
     raise exception 'Please provide valid paid booking details';
   end if;
 
+  if coalesce(jsonb_typeof(p_bookable_items), 'null') <> 'array' then
+    raise exception 'Please select bookable items';
+  end if;
+  if jsonb_array_length(p_bookable_items) < 1 or jsonb_array_length(p_bookable_items) > 10 then
+    raise exception 'Select between 1 and 10 bookable items';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(p_bookable_items) as selection(item)
+    where coalesce(jsonb_typeof(selection.item), 'null') <> 'object'
+      or coalesce(length(selection.item->>'service_id'), 0) not between 1 and 120
+      or coalesce(length(selection.item->>'addon_id'), 0) not between 1 and 120
+  ) then
+    raise exception 'Please select valid bookable items';
+  end if;
+  if jsonb_array_length(p_bookable_items) <> (
+    select count(distinct (selection.item->>'service_id', selection.item->>'addon_id'))
+    from jsonb_array_elements(p_bookable_items) as selection(item)
+  ) then
+    raise exception 'Please select each bookable item only once';
+  end if;
+
   select * into appointment_row
   from public.appointments a
   where a.paystack_reference = p_paystack_reference;
@@ -306,7 +390,8 @@ begin
       'appointment_date', appointment_row.appointment_date,
       'appointment_time', appointment_row.appointment_time,
       'amount', appointment_row.amount,
-      'deposit_paid_kobo', appointment_row.deposit_paid_kobo
+      'deposit_paid_kobo', appointment_row.deposit_paid_kobo,
+      'selected_addons', appointment_row.selected_addons
     );
   end if;
 
@@ -320,19 +405,42 @@ begin
     raise exception 'This business is not configured for NGN payments';
   end if;
 
-  select * into service_row
-  from public.services s
-  where s.id = p_service_id and s.business_id = business_row.business_id;
-  if not found then
-    raise exception 'Service not found';
+  select
+    coalesce(sum(a.price), 0),
+    count(*),
+    coalesce(jsonb_agg(jsonb_build_object(
+      'id', a.id,
+      'name', a.name,
+      'price', a.price,
+      'duration_minutes', a.duration_minutes,
+      'category_name', s.name
+    ) order by selection.ordinality) filter (where selection.ordinality > 1), '[]'::jsonb),
+    (array_agg(s.id order by selection.ordinality))[1],
+    (array_agg(a.name order by selection.ordinality))[1]
+  into total_price, item_count, item_snapshot, primary_category_id, primary_item_name
+  from jsonb_array_elements(p_bookable_items) with ordinality as selection(item, ordinality)
+  join public.services s
+    on s.business_id = business_row.business_id
+    and s.id = selection.item->>'service_id'
+    and s.is_active
+  join public.service_addons a
+    on a.business_id = s.business_id
+    and a.service_id = s.id
+    and a.id = selection.item->>'addon_id'
+    and a.is_active
+    and a.price > 0;
+
+  if item_count <> jsonb_array_length(p_bookable_items) then
+    raise exception 'One or more selected items are unavailable';
   end if;
-  if p_deposit_paid_kobo <> service_row.price * 30 then
-    raise exception 'The payment amount does not match the service deposit';
+
+  if p_deposit_paid_kobo <> total_price * 30 then
+    raise exception 'The payment amount does not match the selected items';
   end if;
 
   insert into public.appointments (
     id, business_id, client_name, client_email, client_phone, client_notes,
-    service_id, service_name, appointment_time, appointment_date, amount, status,
+    service_id, service_name, appointment_time, appointment_date, amount, selected_addons, status,
     paystack_reference, deposit_paid_kobo, payment_status
   ) values (
     'BK-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
@@ -341,11 +449,12 @@ begin
     trim(coalesce(p_client_email, '')),
     trim(p_client_phone),
     trim(coalesce(p_client_notes, '')),
-    service_row.id,
-    service_row.name,
+    primary_category_id,
+    primary_item_name,
     trim(p_appointment_time),
     p_appointment_date,
-    service_row.price,
+    total_price,
+    item_snapshot,
     case when business_row.auto_confirm then 'Confirmed' else 'Pending' end,
     p_paystack_reference,
     p_deposit_paid_kobo,
@@ -368,7 +477,8 @@ begin
       'appointment_date', appointment_row.appointment_date,
       'appointment_time', appointment_row.appointment_time,
       'amount', appointment_row.amount,
-      'deposit_paid_kobo', appointment_row.deposit_paid_kobo
+      'deposit_paid_kobo', appointment_row.deposit_paid_kobo,
+      'selected_addons', appointment_row.selected_addons
     );
   end if;
 
@@ -392,7 +502,7 @@ begin
     'notif-' || replace(gen_random_uuid()::text, '-', ''),
     business_row.business_id,
     'New Booking — Deposit Paid',
-    trim(p_client_name) || ' booked ' || service_row.name || ' and paid the 30% deposit.',
+    trim(p_client_name) || ' booked ' || item_count || ' item(s) and paid the 30% deposit.',
     'payment'
   );
 
@@ -406,7 +516,8 @@ begin
     'appointment_date', appointment_row.appointment_date,
     'appointment_time', appointment_row.appointment_time,
     'amount', appointment_row.amount,
-    'deposit_paid_kobo', appointment_row.deposit_paid_kobo
+    'deposit_paid_kobo', appointment_row.deposit_paid_kobo,
+    'selected_addons', appointment_row.selected_addons
   );
 end;
 $$;
@@ -417,6 +528,43 @@ drop trigger if exists create_business_after_signup on auth.users;
 create trigger create_business_after_signup
   after insert on auth.users
   for each row execute function public.create_business_for_new_user();
+
+create or replace function public.track_signup_confirmation_link()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.email_confirmed_at is not null then
+    delete from public.signup_confirmation_links
+    where auth_user_id = new.id;
+  elsif new.email is not null and new.confirmation_sent_at is not null then
+    insert into public.signup_confirmation_links (auth_user_id, email, sent_at)
+    values (new.id, lower(new.email), new.confirmation_sent_at)
+    on conflict (auth_user_id) do update set
+      email = excluded.email,
+      sent_at = excluded.sent_at;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists track_signup_confirmation_link on auth.users;
+create trigger track_signup_confirmation_link
+  after insert or update of confirmation_sent_at, email_confirmed_at on auth.users
+  for each row execute function public.track_signup_confirmation_link();
+
+insert into public.signup_confirmation_links (auth_user_id, email, sent_at)
+select id, lower(email), confirmation_sent_at
+from auth.users
+where email is not null
+  and email_confirmed_at is null
+  and confirmation_sent_at is not null
+on conflict (auth_user_id) do update set
+  email = excluded.email,
+  sent_at = excluded.sent_at;
 
 insert into public.businesses (
   business_id, owner_id, slug, business_name, owner_name, email, phone, location, logo_url
@@ -444,10 +592,10 @@ select
   selected.name || ' tailored for you',
   case selected.name when 'Barbing' then 'barbing' when 'Spa' then 'spa' when 'Hair dressing' then 'hair' else 'general' end,
   case selected.name when 'Barbing' then 45 when 'Spa' then 60 when 'Hair dressing' then 90 else 60 end,
-  case selected.name when 'Barbing' then 8500 when 'Spa' then 12000 when 'Hair dressing' then 18500 else 10000 end,
+  0,
   case selected.name when 'Barbing' then 'bg-[#eee7ff]' when 'Spa' then 'bg-[#ffe7df]' when 'Hair dressing' then 'bg-[#e7f2ea]' else 'bg-[#f0ded4]' end,
   case selected.name when 'Barbing' then 'text-[#7253cb]' when 'Spa' then 'text-[#d46b4f]' when 'Hair dressing' then 'text-[#528361]' else 'text-[#9e503b]' end,
-  true
+  false
 from auth.users u
 join public.businesses b on b.owner_id = u.id
 cross join lateral jsonb_array_elements_text(coalesce(u.raw_user_meta_data->'selected_services', '[]'::jsonb))
@@ -470,9 +618,9 @@ select
   false
 from public.businesses b
 cross join (values
-  ('Barbing', 'Sharp fades & clean cuts', 'barbing', 45, 8500, 'bg-[#eee7ff]', 'text-[#7253cb]'),
-  ('Spa', 'Slow down & feel good', 'spa', 60, 12000, 'bg-[#ffe7df]', 'text-[#d46b4f]'),
-  ('Hair dressing', 'Your look, your way', 'hair', 90, 18500, 'bg-[#e7f2ea]', 'text-[#528361]')
+  ('Barbing', 'Sharp fades & clean cuts', 'barbing', 45, 0, 'bg-[#eee7ff]', 'text-[#7253cb]'),
+  ('Spa', 'Slow down & feel good', 'spa', 60, 0, 'bg-[#ffe7df]', 'text-[#d46b4f]'),
+  ('Hair dressing', 'Your look, your way', 'hair', 90, 0, 'bg-[#e7f2ea]', 'text-[#528361]')
 ) as catalog(name, detail, category, duration_minutes, price, color, icon_color)
 where not exists (
   select 1 from public.services s
@@ -507,10 +655,25 @@ as $$
         'price', s.price,
         'color', s.color,
         'icon_color', s.icon_color,
-        'is_active', s.is_active
+        'is_active', s.is_active,
+        'addons', coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'id', a.id,
+            'name', a.name,
+            'price', a.price,
+            'duration_minutes', a.duration_minutes,
+            'is_active', a.is_active
+          ) order by a.created_at)
+          from public.service_addons a
+          where a.business_id = s.business_id
+            and a.service_id = s.id
+            and a.is_active
+            and a.price > 0
+        ), '[]'::jsonb)
       ) order by s.created_at)
       from public.services s
-      where s.business_id = b.business_id and s.is_active
+      where s.business_id = b.business_id
+        and s.is_active
     ), '[]'::jsonb)
   )
   from public.businesses b
@@ -566,7 +729,8 @@ begin
 
   select * into service_row
   from public.services s
-  where s.id = p_service_id and s.business_id = business_row.business_id and s.is_active;
+  where s.id = p_service_id and s.business_id = business_row.business_id
+    and s.is_active and s.price > 0;
   if not found then
     raise exception 'Service not found';
   end if;
@@ -644,10 +808,10 @@ grant execute on function public.create_public_booking(text, text, text, text, t
 revoke all on function public.create_public_booking(text, text, text, text, text, text, date, text)
   from public, anon, authenticated;
 revoke all on function public.create_paid_public_booking(
-  text, text, text, text, text, text, date, text, text, integer
+  text, text, text, text, text, date, text, text, integer, jsonb
 ) from public, anon, authenticated;
 grant execute on function public.create_paid_public_booking(
-  text, text, text, text, text, text, date, text, text, integer
+  text, text, text, text, text, date, text, text, integer, jsonb
 ) to service_role;
 
 do $$
@@ -661,6 +825,9 @@ begin
     end if;
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'services') then
       alter publication supabase_realtime add table public.services;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'service_addons') then
+      alter publication supabase_realtime add table public.service_addons;
     end if;
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'clients') then
       alter publication supabase_realtime add table public.clients;

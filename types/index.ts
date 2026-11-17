@@ -8,6 +8,36 @@ export interface Service {
   color: string
   iconColor: string
   isActive: boolean
+  addons: ServiceAddon[]
+}
+
+export interface ServiceAddon {
+  id: string
+  name: string
+  price: number
+  durationMinutes: number
+  isActive: boolean
+}
+
+export type SelectedServiceAddon = Pick<ServiceAddon, 'id' | 'name' | 'price' | 'durationMinutes'>
+
+export interface Appointment {
+  id: string
+  businessId: string
+  serviceId?: string
+  clientName: string
+  clientEmail?: string
+  clientPhone?: string
+  serviceName: string
+  selectedAddons?: SelectedServiceAddon[]
+  time: string
+  date: string
+  createdAt?: string
+  amount: number
+  deposit_paid_kobo: number
+  payment_status: 'unpaid' | 'paid'
+  paystackReference?: string
+  status: 'Paid' | 'Confirmed' | 'Pending' | 'Archived' | 'Rejected'
 }
 
 export interface Business {
@@ -22,21 +52,6 @@ export interface Business {
   rating: number
   services: Service[]
   status: 'active' | 'onboarding'
-}
-
-export interface Appointment {
-  id: string
-  businessId: string
-  serviceId?: string
-  clientName: string
-  clientPhone?: string
-  serviceName: string
-  time: string
-  date: string
-  amount: number
-  deposit_paid_kobo: number
-  payment_status: 'unpaid' | 'paid'
-  status: 'Paid' | 'Confirmed' | 'Pending' | 'Archived' | 'Rejected'
 }
 
 export interface NotificationItem {

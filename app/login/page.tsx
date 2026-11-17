@@ -21,7 +21,7 @@ export default function LoginPage() {
     setLoginError('')
     setIsLoading(true)
     try {
-      const { error } = await supa.auth.signInWithPassword({
+      const { data, error } = await supa.auth.signInWithPassword({
         email: email.trim(),
         password,
       })
@@ -33,6 +33,17 @@ export default function LoginPage() {
             : error.message
         )
         return
+      }
+      if (data.user?.user_metadata.welcome_popup_pending === true) {
+        try {
+          window.sessionStorage.setItem('booka:pending-welcome-user', data.user.id)
+        } catch (storageError) {
+          console.error('Could not prepare the welcome message:', storageError)
+          const { error: signOutError } = await supa.auth.signOut()
+          if (signOutError) console.error('Could not end the login session:', signOutError.message)
+          setLoginError('Your login succeeded, but browser storage could not prepare your welcome message. Please enable browser storage and try again.')
+          return
+        }
       }
       router.push('/dashboard')
     } catch (error) {

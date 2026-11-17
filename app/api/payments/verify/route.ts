@@ -4,6 +4,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+type BookingSelection = { service_id: string; addon_id: string }
+
+function isBookingSelection(value: unknown): value is BookingSelection {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.service_id === 'string' &&
+    value.service_id.length > 0 &&
+    value.service_id.length <= 120 &&
+    typeof value.addon_id === 'string' &&
+    value.addon_id.length > 0 &&
+    value.addon_id.length <= 120
+  )
+}
+
+function parseBookingSelections(value: unknown): BookingSelection[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 10) return null
+
+  const selections: BookingSelection[] = []
+  for (const item of value) {
+    if (!isBookingSelection(item)) return null
+    selections.push(item)
+  }
+
+  const selectionKeys = selections.map((item) => `${item.service_id}\u0000${item.addon_id}`)
+  return new Set(selectionKeys).size === selections.length ? selections : null
+}
+
 export async function POST(request: Request) {
   let body: unknown
   try {
@@ -73,10 +100,11 @@ export async function POST(request: Request) {
 
   const metadata = isRecord(transaction.metadata) ? transaction.metadata : null
   const booking = metadata && isRecord(metadata.booka_booking) ? metadata.booka_booking : null
+  const items = parseBookingSelections(booking?.items)
   if (
     !booking ||
+    !items ||
     typeof booking.slug !== 'string' ||
-    typeof booking.service_id !== 'string' ||
     typeof booking.client_name !== 'string' ||
     typeof booking.client_phone !== 'string' ||
     typeof booking.client_email !== 'string' ||
@@ -94,7 +122,6 @@ export async function POST(request: Request) {
   })
   const { data, error } = await supabase.rpc('create_paid_public_booking', {
     p_slug: booking.slug,
-    p_service_id: booking.service_id,
     p_client_name: booking.client_name,
     p_client_phone: booking.client_phone,
     p_client_email: booking.client_email,
@@ -103,6 +130,7 @@ export async function POST(request: Request) {
     p_appointment_time: booking.appointment_time,
     p_paystack_reference: body.reference,
     p_deposit_paid_kobo: booking.deposit_paid_kobo,
+    p_bookable_items: items,
   })
 
   if (error) {

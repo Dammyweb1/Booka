@@ -32,13 +32,7 @@ export default function LandingPage() {
                 href="/onboarding"
                 className="inline-flex items-center rounded-full bg-[#d46b4f] px-6 py-3.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(212,107,79,.22)] transition hover:-translate-y-0.5 hover:bg-[#c66046]"
               >
-                Onboarding <ArrowRight className="ml-2 inline" size={16} />
-              </Link>
-              <Link
-                href="/login"
-                className="rounded-full border border-[#cfc7bc] bg-transparent px-6 py-3.5 text-sm font-semibold text-[#3e3935] transition hover:bg-white"
-              >
-                Sign in to backoffice
+                Get Started <ArrowRight className="ml-2 inline" size={16} />
               </Link>
             </div>
           </div>

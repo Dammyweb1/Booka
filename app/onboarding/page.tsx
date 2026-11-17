@@ -8,9 +8,55 @@ import { Logo } from '@/components/brand/logo'
 import { createSupabaseClient } from '@/lib/supabase'
 import { cn, generateBusinessId, generateUniqueSlug } from '@/lib/utils'
 
+const duplicateEmailMessage = 'This email is already registered. Use another email address or log in to your existing account.'
+
+async function checkBusinessEmailAvailability(email: string) {
+  const response = await fetch('/api/onboarding/check-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+
+  let result: unknown
+  try {
+    result = await response.json()
+  } catch {
+    throw new Error('Could not verify this email address. Please try again.')
+  }
+
+  if (
+    response.status === 409 &&
+    typeof result === 'object' &&
+    result !== null &&
+    'available' in result &&
+    result.available === false
+  ) {
+    return false
+  }
+
+  if (!response.ok) {
+    const message = typeof result === 'object' && result !== null && 'error' in result &&
+      typeof result.error === 'string'
+      ? result.error
+      : 'Could not verify this email address. Please try again.'
+    throw new Error(message)
+  }
+
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    !('available' in result) ||
+    result.available !== true
+  ) {
+    throw new Error('Could not verify this email address. Please try again.')
+  }
+
+  return true
+}
+
 export default function OnboardingPage() {
   const router = useRouter()
-  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [businessData, setBusinessData] = useState({
@@ -26,8 +72,13 @@ export default function OnboardingPage() {
   })
   const [selectedServices, setSelectedServices] = useState<string[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [confirmationRequired, setConfirmationRequired] = useState(false)
+  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false)
+  const [confirmationResendMessage, setConfirmationResendMessage] = useState('')
+  const [registrationMessage, setRegistrationMessage] = useState('')
+  const [logoNeedsUpload, setLogoNeedsUpload] = useState(false)
 
   const serviceOptions = [
     { name: 'Barbing', detail: 'Cuts, fades & grooming', icon: Scissors },
@@ -57,6 +108,29 @@ export default function OnboardingPage() {
     )
   }
 
+  const handleResendConfirmation = async () => {
+    setConfirmationResendMessage('')
+    setIsResendingConfirmation(true)
+    try {
+      const { error } = await createSupabaseClient().auth.resend({
+        type: 'signup',
+        email: businessData.email.trim(),
+        options: {
+          emailRedirectTo: new URL('/login', window.location.origin).toString(),
+        },
+      })
+      if (error) throw error
+      setConfirmationResendMessage('Supabase accepted the resend request. Check your inbox and spam folder.')
+    } catch (error) {
+      console.error('Confirmation email resend failed:', error)
+      setConfirmationResendMessage(
+        error instanceof Error ? error.message : 'Could not resend the confirmation email. Please try again later.'
+      )
+    } finally {
+      setIsResendingConfirmation(false)
+    }
+  }
+
   const handleComplete = async () => {
     setSubmitError('')
     setConfirmationRequired(false)
@@ -80,15 +154,26 @@ export default function OnboardingPage() {
     const uniqueSlug = generateUniqueSlug(businessName, uniqueId)
 
     try {
+      const emailAvailable = await checkBusinessEmailAvailability(email)
+      if (!emailAvailable) {
+        setSubmitError(duplicateEmailMessage)
+        setStep(1)
+        return
+      }
+
       const supabase = createSupabaseClient()
       const { data, error } = await supabase.auth.signUp({
         email,
         password: businessData.password,
         options: {
+          emailRedirectTo: new URL('/login', window.location.origin).toString(),
           data: {
             business_id: uniqueId,
             business_slug: uniqueSlug,
             business_name: businessName,
+            registration_success_message: "You're successfully registered on Booka.",
+            welcome_message: `Welcome to Booka, ${businessName}. Your business profile is ready. You're all set to manage your appointments, services, and clients.`,
+            welcome_popup_pending: true,
             owner_name: ownerName,
             owner_first_name: businessData.ownerFirstName.trim(),
             owner_last_name: businessData.ownerLastName.trim(),
@@ -101,12 +186,27 @@ export default function OnboardingPage() {
       })
 
       if (error) {
+        if (error.message.toLowerCase().includes('already registered')) {
+          setSubmitError(duplicateEmailMessage)
+          setStep(1)
+          return
+        }
         setSubmitError(error.message)
         return
       }
 
+      if (!data.user) {
+        throw new Error('Supabase did not return the registered account.')
+      }
+
+      if (data.user.identities?.length === 0) {
+        setSubmitError('This email may already be registered. Use another email address or log in to your existing account.')
+        setStep(1)
+        return
+      }
+
       if (data.session) {
-        if (businessData.logoUrl && data.user) {
+        if (businessData.logoUrl) {
           try {
             const { error: logoError } = await supabase.from('businesses')
               .update({ logo_url: businessData.logoUrl })
@@ -118,16 +218,22 @@ export default function OnboardingPage() {
             return
           }
         }
-        router.push('/welcome')
-      } else {
-        setConfirmationRequired(true)
-        if (businessData.logoUrl) {
-          setSubmitError('After confirming your email and logging in, upload your logo from Dashboard → Settings.')
-        }
+        const { error: signOutError } = await supabase.auth.signOut()
+        if (signOutError) throw signOutError
       }
+
+      const successMessage = data.user.user_metadata.registration_success_message
+      if (typeof successMessage !== 'string' || !successMessage.trim()) {
+        throw new Error('Supabase did not return the registration confirmation message.')
+      }
+      setRegistrationMessage(successMessage)
+      setConfirmationRequired(!data.session)
+      setLogoNeedsUpload(!data.session && Boolean(businessData.logoUrl))
+      setBusinessData((current) => ({ ...current, password: '', confirmPassword: '' }))
+      setStep(4)
     } catch (error) {
       console.error('Account registration failed:', error)
-      setSubmitError('Could not create your account. Check your connection and try again.')
+      setSubmitError(error instanceof Error ? error.message : 'Could not create your account. Check your connection and try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -143,6 +249,7 @@ export default function OnboardingPage() {
             {step === 1 && '01 / Registration'}
             {step === 2 && '02 / Profile & Security'}
             {step === 3 && '03 / Services'}
+            {step === 4 && '04 / Complete'}
           </p>
           <h1 className="mt-5 max-w-[390px] text-5xl lg:text-6xl font-medium leading-[.95] tracking-[-.07em]">
             Build your <em className="font-serif not-italic text-[#e89b80]">place</em> on Booka.
@@ -151,6 +258,7 @@ export default function OnboardingPage() {
             {step === 1 && 'Set up your details and let customers discover your services with confidence.'}
             {step === 2 && 'Upload your business logo, address, and secure your owner account.'}
             {step === 3 && 'Choose the services you offer to start accepting appointments immediately.'}
+            {step === 4 && 'Your registration is complete. Log in to continue to your Booka backoffice.'}
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-white/40">
@@ -165,18 +273,21 @@ export default function OnboardingPage() {
         <div className="flex items-center justify-between px-6 py-4 lg:px-10 lg:py-5">
           <div className="flex items-center gap-2">
             <Logo className="sm:hidden" />
-            <button
-              onClick={() => {
-                if (step > 1) setStep(step === 3 ? 2 : 1)
-                else router.push('/')
-              }}
-              className="hidden items-center gap-1.5 text-sm font-semibold text-[#1e1c1a] transition hover:text-[#d46b4f] sm:inline-flex"
-            >
-              <ChevronLeft size={18} /> Back
-            </button>
+            {step !== 4 && (
+              <button
+                onClick={() => {
+                  if (step === 2) setStep(1)
+                  else if (step === 3) setStep(2)
+                  else router.push('/')
+                }}
+                className="hidden items-center gap-1.5 text-sm font-semibold text-[#1e1c1a] transition hover:text-[#d46b4f] sm:inline-flex"
+              >
+                <ChevronLeft size={18} /> Back
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-4 text-sm text-[#8c847c]">
-            <span className="hidden sm:inline">Step {step} of 3</span>
+            <span className="hidden sm:inline">Step {step} of 4</span>
             <span className="hidden text-xs sm:inline">·</span>
             <span>
               <span className="hidden sm:inline">Already have an account?{' '}</span>
@@ -194,6 +305,7 @@ export default function OnboardingPage() {
             <span className={cn('h-1.5 w-16 rounded-full transition-colors', step >= 1 ? 'bg-[#d46b4f]' : 'bg-[#ded8cf]')} />
             <span className={cn('h-1.5 w-16 rounded-full transition-colors', step >= 2 ? 'bg-[#d46b4f]' : 'bg-[#ded8cf]')} />
             <span className={cn('h-1.5 w-16 rounded-full transition-colors', step >= 3 ? 'bg-[#d46b4f]' : 'bg-[#ded8cf]')} />
+            <span className={cn('h-1.5 w-16 rounded-full transition-colors', step >= 4 ? 'bg-[#d46b4f]' : 'bg-[#ded8cf]')} />
           </div>
 
           {submitError && (
@@ -201,13 +313,6 @@ export default function OnboardingPage() {
               {submitError}
             </p>
           )}
-          {confirmationRequired && (
-            <p role="status" className="mb-4 rounded-xl bg-[#edf6ee] px-4 py-3 text-sm text-[#315d3b]">
-              Account created. Check your email to confirm your address, then{' '}
-              <Link href="/login" className="font-semibold underline">log in</Link>.
-            </p>
-          )}
-
           {/* STEP 1: BUSINESS & OWNER DETAILS */}
           {step === 1 && (
             <div className="space-y-4">
@@ -221,7 +326,7 @@ export default function OnboardingPage() {
 
               <form
                 className="space-y-3.5"
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault()
                   setSubmitError('')
                   if (
@@ -234,7 +339,22 @@ export default function OnboardingPage() {
                     setSubmitError('Complete all required fields before continuing.')
                     return
                   }
-                  setStep(2)
+                  setIsCheckingEmail(true)
+                  try {
+                    const emailAvailable = await checkBusinessEmailAvailability(businessData.email.trim())
+                    if (!emailAvailable) {
+                      setSubmitError(duplicateEmailMessage)
+                      return
+                    }
+                    setStep(2)
+                  } catch (error) {
+                    console.error('Business email availability check failed:', error)
+                    setSubmitError(
+                      error instanceof Error ? error.message : 'Could not verify this email address. Please try again.'
+                    )
+                  } finally {
+                    setIsCheckingEmail(false)
+                  }
                 }}
               >
                 {/* Business name - full width */}
@@ -280,8 +400,12 @@ export default function OnboardingPage() {
                     <input
                       type="email"
                       required
+                      disabled={isCheckingEmail}
                       value={businessData.email}
-                      onChange={(e) => setBusinessData({ ...businessData, email: e.target.value })}
+                      onChange={(e) => {
+                        setBusinessData({ ...businessData, email: e.target.value })
+                        setSubmitError('')
+                      }}
                       placeholder="owner@yourplace.com"
                       className="w-full rounded-[14px] border border-[#ded8cf] bg-white px-4 py-2.5 text-sm transition focus:border-[#d46b4f] focus:outline-none"
                     />
@@ -302,9 +426,11 @@ export default function OnboardingPage() {
                 <div className="pt-2 flex gap-3">
                   <button
                     type="submit"
+                    disabled={isCheckingEmail}
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-[#d46b4f] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#c6604f]"
                   >
-                    Next: Profile & Security <ArrowRight size={15} />
+                    {isCheckingEmail ? 'Checking email...' : 'Next: Profile & Security'}
+                    {!isCheckingEmail && <ArrowRight size={15} />}
                   </button>
                 </div>
               </form>
@@ -525,6 +651,49 @@ export default function OnboardingPage() {
                   {!isSubmitting && !confirmationRequired && <ArrowRight size={15} />}
                 </button>
               </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="rounded-[28px] border border-[#e5ddd4] bg-[#fffdf9] p-7 text-center shadow-sm sm:p-10">
+              <div className="mx-auto grid size-16 place-items-center rounded-[22px] bg-[#e7f2ea] text-[#528361]">
+                <Check size={28} />
+              </div>
+              <p className="eyebrow mt-6 text-[#528361]">Registration complete</p>
+              <h2 className="mt-3 text-3xl font-medium tracking-[-.06em]">{registrationMessage}</h2>
+              <p className="mx-auto mt-4 max-w-[380px] text-sm leading-7 text-[#756f69]">
+                {confirmationRequired
+                  ? `Check ${businessData.email.trim()} for a confirmation link. Confirm your email, then log in to your backoffice.`
+                  : 'Your account is ready. Log in to open your backoffice.'}
+              </p>
+              {confirmationRequired && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleResendConfirmation}
+                    disabled={isResendingConfirmation}
+                    className="mt-4 text-sm font-semibold text-[#d46b4f] underline-offset-4 hover:underline disabled:opacity-50"
+                  >
+                    {isResendingConfirmation ? 'Sending...' : 'Resend confirmation email'}
+                  </button>
+                  {confirmationResendMessage && (
+                    <p role="status" className="mt-3 text-xs leading-5 text-[#756f69]">
+                      {confirmationResendMessage}
+                    </p>
+                  )}
+                </>
+              )}
+              {logoNeedsUpload && (
+                <p className="mt-3 text-xs leading-5 text-[#8c847c]">
+                  After confirming your email and logging in, upload your logo from Dashboard → Settings.
+                </p>
+              )}
+              <Link
+                href="/login"
+                className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#1e1c1a] px-6 py-4 text-sm font-semibold text-white transition hover:bg-[#d46b4f]"
+              >
+                Continue to login <ArrowRight size={16} />
+              </Link>
             </div>
           )}
         </div>
