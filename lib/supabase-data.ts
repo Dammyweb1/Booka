@@ -27,8 +27,17 @@ export type BusinessWorkspace = {
   notifications: NotificationItem[]
 }
 
-function requireNoError(error: { message: string } | null) {
-  if (error) throw new Error(error.message)
+function requireNoError(
+  error: { message: string; code?: string } | null,
+  operation = 'Saving workspace data'
+) {
+  if (error) {
+    console.error(`Supabase workspace query failed (${operation}):`, {
+      code: error.code,
+      message: error.message,
+    })
+    throw new Error(`${operation}: ${error.message}${error.code ? ` (${error.code})` : ''}`)
+  }
 }
 
 export async function loadBusinessWorkspace(userId: string): Promise<BusinessWorkspace> {
@@ -43,12 +52,12 @@ export async function loadBusinessWorkspace(userId: string): Promise<BusinessWor
       supabase.from('notifications').select('*').order('created_at', { ascending: false }),
     ])
 
-  requireNoError(businessResult.error)
-  requireNoError(servicesResult.error)
-  requireNoError(addonsResult.error)
-  requireNoError(appointmentsResult.error)
-  requireNoError(clientsResult.error)
-  requireNoError(notificationsResult.error)
+  requireNoError(businessResult.error, 'Loading business profile')
+  requireNoError(servicesResult.error, 'Loading services')
+  requireNoError(addonsResult.error, 'Loading service add-ons')
+  requireNoError(appointmentsResult.error, 'Loading appointments')
+  requireNoError(clientsResult.error, 'Loading clients')
+  requireNoError(notificationsResult.error, 'Loading notifications')
 
   const business = businessResult.data as BusinessRow | null
   if (!business) {

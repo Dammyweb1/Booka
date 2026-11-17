@@ -103,7 +103,14 @@ export default function DashboardPage() {
       try {
         const supabase = createSupabaseClient()
         const { data: { user }, error } = await supabase.auth.getUser()
-        if (error) throw error
+        if (error) {
+          console.error('Dashboard Supabase session lookup failed:', {
+            status: error.status,
+            code: error.code,
+            message: error.message,
+          })
+          throw new Error(`Checking your Supabase session: ${error.message}`)
+        }
         if (!user) {
           router.replace('/login')
           return
