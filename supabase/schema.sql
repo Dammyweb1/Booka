@@ -15,6 +15,13 @@ alter table public.platform_admins
   add column if not exists updated_at timestamptz not null default now(),
   add column if not exists is_active boolean not null default true;
 
+update public.platform_admins pa
+set email = u.email
+from auth.users u
+where pa.id = u.id
+  and u.email is not null
+  and pa.email is distinct from u.email;
+
 create or replace function public.admin_has_access(p_allowed_roles text[])
 returns boolean
 language sql

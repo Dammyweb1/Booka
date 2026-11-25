@@ -219,8 +219,8 @@ export default function AdminLoginPage() {
         {/* Center Card Content */}
         <div className="w-full max-w-md mx-auto my-auto">
           {awaiting2FA ? (
-            <div>
-              <p className="text-[11px] font-mono uppercase tracking-[0.16em] text-[#c0593c] font-bold flex items-center gap-1.5">
+            <div className="text-center">
+              <p className="text-[11px] font-mono uppercase tracking-[0.16em] text-[#c0593c] font-bold flex items-center justify-center gap-1.5">
                 <QrCode className="size-3.5" />
                 AUTHENTICATOR 2FA
               </p>
@@ -250,9 +250,9 @@ export default function AdminLoginPage() {
                 <div className="mt-5 p-4 rounded-2xl bg-transparent flex flex-col items-center text-center">
                   <div className="p-2.5 rounded-xl bg-transparent inline-flex items-center justify-center">
                     <img
-                      src={qrCodeUrl}
-                      alt="Authenticator 2FA QR Code"
-                      className="size-36 object-contain"
+                    src={qrCodeUrl}
+                    alt="Authenticator 2FA QR Code"
+                    className="size-36 object-contain"
                     />
                   </div>
                 </div>
@@ -261,10 +261,10 @@ export default function AdminLoginPage() {
               {/* Verification Form */}
               <form onSubmit={handleAuth} className="mt-5 space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-[#1e1c1a] mb-1.5">
+                  <label className="block text-xs font-medium text-[#1e1c1a] mb-1.5 text-center">
                     Enter 6-digit code from authenticator app
                   </label>
-                  <div className="flex gap-2 mb-5" role="group" aria-label="6-digit verification code">
+                  <div className="flex justify-center gap-2 mb-5" role="group" aria-label="6-digit verification code">
                     {Array.from({ length: 6 }).map((_, index) => (
                     <input
                       key={index}
@@ -309,7 +309,7 @@ export default function AdminLoginPage() {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-[352px] max-w-full h-12 rounded-xl bg-[#c0593c] hover:bg-[#a84b31] disabled:opacity-50 text-white font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-sm"
+                  className="mx-auto w-[352px] max-w-full h-12 rounded-xl bg-[#c0593c] hover:bg-[#a84b31] disabled:opacity-50 text-white font-medium text-sm transition-all flex items-center justify-center gap-2 shadow-sm"
                 >
                   <span>{isLoading ? 'Verifying clearance...' : 'Verify & Continue'}</span>
                   <ArrowRight className="size-4" />
@@ -323,7 +323,7 @@ export default function AdminLoginPage() {
                     setErrorMessage('')
                     setQrCodeUrl(null)
                   }}
-                  className="w-[352px] max-w-full py-2 text-center text-xs font-medium text-[#756f69] hover:text-[#1e1c1a] transition"
+                  className="mx-auto block w-[352px] max-w-full py-2 text-center text-xs font-medium text-[#756f69] hover:text-[#1e1c1a] transition"
                 >
                   ← Back to sign in
                 </button>
@@ -360,7 +360,7 @@ export default function AdminLoginPage() {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="admin@booka.com"
+                      placeholder="adeshola.adedokun@sendsphere.co"
                       className="w-full h-11 pl-10 pr-3.5 rounded-xl border border-[#ded8cf] bg-white text-sm text-[#1e1c1a] placeholder-[#a69f97] focus:outline-none focus:border-[#c0593c] focus:ring-1 focus:ring-[#c0593c]"
                     />
                   </div>
@@ -369,7 +369,7 @@ export default function AdminLoginPage() {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-medium text-[#1e1c1a]">Password</label>
-                    <Link href="/reset-password" className="text-xs font-medium text-[#c0593c] hover:underline">
+                    <Link href="/admin/reset-password" className="text-xs font-medium text-[#c0593c] hover:underline">
                       Forgot password?
                     </Link>
                   </div>
@@ -420,7 +420,7 @@ export default function AdminLoginPage() {
           )}
 
           {/* Security Sub-Notice */}
-          <div className={`${awaiting2FA ? 'w-[352px] max-w-full' : ''} mt-6 flex items-center justify-center gap-1.5 text-xs text-[#756f69]`}>
+          <div className={`${awaiting2FA ? 'mx-auto w-[352px] max-w-full text-center' : ''} mt-6 flex items-center justify-center gap-1.5 text-xs text-[#756f69]`}>
             <ShieldCheck className="size-4 text-[#528361]" />
             <span>
               {'Protected access. Every session is logged.'}

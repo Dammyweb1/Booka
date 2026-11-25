@@ -35,10 +35,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   // Pages that don't need the admin sidebar
-  const isAuthPage = pathname === '/admin/auth'
+  const isPublicAdminAuthPage = pathname === '/admin/auth' || pathname === '/admin/reset-password'
 
   useEffect(() => {
-    if (isAuthPage) {
+    if (isPublicAdminAuthPage) {
       setIsLoading(false)
       return
     }
@@ -87,9 +87,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
 
     verifyAdminClearance()
-  }, [pathname, isAuthPage, router])
+  }, [pathname, isPublicAdminAuthPage, router])
 
-  if (isAuthPage) {
+  if (isPublicAdminAuthPage) {
     return <>{children}</>
   }
 
