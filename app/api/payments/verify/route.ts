@@ -112,6 +112,10 @@ export async function POST(request: Request) {
     typeof booking.appointment_date !== 'string' ||
     typeof booking.appointment_time !== 'string' ||
     !Number.isInteger(booking.deposit_paid_kobo) ||
+    typeof booking.deposit_percent !== 'number' ||
+    !Number.isFinite(booking.deposit_percent) ||
+    booking.deposit_percent < 1 ||
+    booking.deposit_percent > 100 ||
     transaction.amount !== booking.deposit_paid_kobo
   ) {
     return Response.json({ error: 'Payment details did not match the booking.' }, { status: 400 })
@@ -130,6 +134,7 @@ export async function POST(request: Request) {
     p_appointment_time: booking.appointment_time,
     p_paystack_reference: body.reference,
     p_deposit_paid_kobo: booking.deposit_paid_kobo,
+    p_deposit_percent: booking.deposit_percent,
     p_bookable_items: items,
   })
 

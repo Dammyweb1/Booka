@@ -114,9 +114,25 @@ export async function POST(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
+  const { data: platformSettings, error: settingsError } = await supabase
+    .from('platform_settings')
+    .select('booking_deposit_percent, maintenance_mode')
+    .eq('singleton', true)
+    .maybeSingle()
+  if (settingsError || !platformSettings) {
+    return Response.json({ error: 'Platform checkout settings are unavailable.' }, { status: 503 })
+  }
+  if (platformSettings.maintenance_mode) {
+    return Response.json({ error: 'Booking payments are temporarily paused. Please try again later.' }, { status: 503 })
+  }
+  const depositPercent = Number(platformSettings.booking_deposit_percent)
+  if (!Number.isFinite(depositPercent) || depositPercent < 1 || depositPercent > 100) {
+    return Response.json({ error: 'Booking deposit settings are invalid.' }, { status: 503 })
+  }
+
   const { data: business, error: businessError } = await supabase
     .from('businesses')
-    .select('business_id, currency')
+    .select('business_id, currency, lifecycle_status')
     .eq('slug', slug)
     .maybeSingle()
   if (businessError) {
@@ -124,6 +140,9 @@ export async function POST(request: Request) {
   }
   if (!business) {
     return Response.json({ error: 'This business could not be found.' }, { status: 404 })
+  }
+  if (business.lifecycle_status !== 'active') {
+    return Response.json({ error: 'This studio is currently suspended and cannot accept bookings.' }, { status: 409 })
   }
   if (!business.currency.startsWith('NGN')) {
     return Response.json({ error: 'Paystack checkout currently supports NGN bookings only.' }, { status: 400 })
@@ -166,7 +185,7 @@ export async function POST(request: Request) {
   }
 
   const totalPrice = selectedAddons.reduce((total, addon) => total + addon.price, 0)
-  const depositPaidKobo = totalPrice * 30
+  const depositPaidKobo = Math.round(totalPrice * depositPercent)
   const reference = `booka_${crypto.randomUUID()}`
   const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin).replace(/\/+$/, '')
 
@@ -198,6 +217,7 @@ export async function POST(request: Request) {
             appointment_date: appointmentDate,
             appointment_time: appointmentTime,
             deposit_paid_kobo: depositPaidKobo,
+            deposit_percent: depositPercent,
           },
         },
       }),

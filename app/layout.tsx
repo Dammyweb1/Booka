@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import { DM_Sans, Fraunces } from 'next/font/google'
 import type { Metadata, Viewport } from 'next'
+import PWAInstallPrompt from '@/components/pwa-install-prompt'
 import './globals.css'
 
 const dmSans = DM_Sans({ subsets: ['latin'], variable: '--font-dm-sans' })
@@ -30,6 +31,7 @@ export default function RootLayout({
     <html lang="en" data-scroll-behavior="smooth">
       <body className={`${dmSans.variable} ${fraunces.variable} antialiased`}>
         {children}
+        <PWAInstallPrompt />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

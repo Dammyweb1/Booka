@@ -22,6 +22,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# pwa generated service worker
+public/sw*
+public/swe-worker*
+public/workbox*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

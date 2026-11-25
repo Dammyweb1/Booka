@@ -119,6 +119,7 @@ export default function BusinessBookingPage() {
           timezone: string
           currency: string
           auto_confirm: boolean
+          lifecycle_status: 'active' | 'suspended'
           services: Array<{
             id: string
             name: string
@@ -137,6 +138,10 @@ export default function BusinessBookingPage() {
               is_active: boolean
             }>
           }>
+        }
+        if (result.lifecycle_status !== 'active') {
+          setLoadError('This studio is currently suspended and cannot accept bookings.')
+          return
         }
         const loadedServices = result.services
           .map((service) => ({
