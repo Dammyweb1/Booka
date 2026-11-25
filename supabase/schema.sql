@@ -10,6 +10,30 @@ create table if not exists public.platform_admins (
   created_at timestamptz not null default now()
 );
 
+alter table public.platform_admins
+  add column if not exists last_seen_at timestamptz,
+  add column if not exists updated_at timestamptz not null default now(),
+  add column if not exists is_active boolean not null default true;
+
+create or replace function public.admin_has_access(p_allowed_roles text[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.platform_admins pa
+    where pa.id = auth.uid()
+      and pa.is_active
+      and pa.role = any(p_allowed_roles)
+      and (not pa.requires_2fa or coalesce(auth.jwt()->>'aal', 'aal1') = 'aal2')
+  )
+$$;
+revoke all on function public.admin_has_access(text[]) from public, anon;
+grant execute on function public.admin_has_access(text[]) to authenticated;
+
 alter table public.platform_admins enable row level security;
 
 drop policy if exists "Admins can view their own record" on public.platform_admins;
@@ -948,7 +972,9 @@ create policy "Superadmins can read platform audit logs"
   to authenticated
   using (exists (
     select 1 from public.platform_admins pa
-    where pa.id = (select auth.uid()) and pa.role = 'superadmin'
+    where pa.id = (select auth.uid()) and pa.is_active
+      and pa.role in ('superadmin', 'auditor')
+      and (not pa.requires_2fa or (select auth.jwt()->>'aal') = 'aal2')
   ));
 
 create or replace function public.apply_platform_default_fee()
@@ -1019,11 +1045,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support', 'auditor']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1057,10 +1079,7 @@ declare
   updated_settings public.platform_settings%rowtype;
   current_actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role = 'superadmin'
-  ) then
+  if not public.admin_has_access(array['superadmin']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1155,11 +1174,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'auditor')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'auditor']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1197,11 +1212,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support', 'auditor']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1253,11 +1264,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1
-    from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role = 'superadmin'
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1307,11 +1314,7 @@ declare
   previous_settings public.businesses%rowtype;
   current_actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1
-    from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role = 'superadmin'
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1385,28 +1388,36 @@ alter table public.admin_notifications enable row level security;
 grant select, update on public.admin_notifications to authenticated;
 
 drop policy if exists "Superadmins can read admin notifications" on public.admin_notifications;
-create policy "Superadmins can read admin notifications"
+drop policy if exists "Platform admins can read admin notifications" on public.admin_notifications;
+create policy "Platform admins can read admin notifications"
   on public.admin_notifications for select
   to authenticated
   using (exists (
     select 1
     from public.platform_admins pa
-    where pa.id = (select auth.uid()) and pa.role = 'superadmin'
+    where pa.id = (select auth.uid()) and pa.is_active
+      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
+      and (not pa.requires_2fa or (select auth.jwt()->>'aal') = 'aal2')
   ));
 
 drop policy if exists "Superadmins can mark admin notifications read" on public.admin_notifications;
-create policy "Superadmins can mark admin notifications read"
+drop policy if exists "Platform admins can mark admin notifications read" on public.admin_notifications;
+create policy "Platform admins can mark admin notifications read"
   on public.admin_notifications for update
   to authenticated
   using (exists (
     select 1
     from public.platform_admins pa
-    where pa.id = (select auth.uid()) and pa.role = 'superadmin'
+    where pa.id = (select auth.uid()) and pa.is_active
+      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
+      and (not pa.requires_2fa or (select auth.jwt()->>'aal') = 'aal2')
   ))
   with check (exists (
     select 1
     from public.platform_admins pa
-    where pa.id = (select auth.uid()) and pa.role = 'superadmin'
+    where pa.id = (select auth.uid()) and pa.is_active
+      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
+      and (not pa.requires_2fa or (select auth.jwt()->>'aal') = 'aal2')
   ));
 
 create or replace function public.log_admin_business_signup()
@@ -1483,11 +1494,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'finance', 'operations', 'support', 'auditor')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support', 'auditor']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1524,11 +1531,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'finance', 'operations', 'support')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1665,10 +1668,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'operations', 'finance', 'support')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'operations', 'finance', 'support']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -1704,10 +1704,9 @@ declare
   before_row public.businesses%rowtype;
   actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'operations')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'operations']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_lifecycle_status not in ('active', 'suspended') then
     raise exception 'Invalid lifecycle status';
   end if;
@@ -1747,10 +1746,9 @@ set search_path = ''
 as $$
 declare before_row public.businesses%rowtype; actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'operations', 'support')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'operations', 'support']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_verification_status not in ('pending', 'under_review', 'verified', 'rejected') then
     raise exception 'Invalid verification status';
   end if;
@@ -1792,10 +1790,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'finance', 'operations', 'support')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations', 'support']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_limit is null or p_limit < 1 or p_limit > 100 or p_offset is null or p_offset < 0 then
     raise exception 'Invalid booking page';
   end if;
@@ -1830,10 +1827,9 @@ set search_path = ''
 as $$
 declare before_row public.appointments%rowtype; actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'finance', 'operations')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_outcome not in ('normal', 'refund_pending', 'refunded', 'disputed', 'chargeback') then
     raise exception 'Invalid payment outcome';
   end if;
@@ -1863,10 +1859,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role = 'superadmin'
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   return query select pa.id, pa.email, pa.role, pa.requires_2fa, pa.last_seen_at, pa.created_at
     from public.platform_admins pa order by pa.created_at desc;
 end;
@@ -1884,9 +1879,9 @@ set search_path = ''
 as $$
 declare before_row public.platform_admins%rowtype; actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa where pa.id = auth.uid() and pa.role = 'superadmin'
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_admin_id = auth.uid() then raise exception 'You cannot change your own admin role'; end if;
   if p_role not in ('superadmin', 'finance', 'operations', 'support', 'auditor') then
     raise exception 'Invalid admin role';
@@ -1915,10 +1910,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'finance', 'operations')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   return query
   select p.id, p.business_id, b.business_name, p.paystack_transfer_code, p.paystack_reference,
     p.amount_kobo, p.status, p.failure_reason, p.initiated_at, p.completed_at
@@ -1957,10 +1951,9 @@ set search_path = ''
 as $$
 declare before_row public.platform_payout_records%rowtype; actor_email text;
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid() and pa.role in ('superadmin', 'finance')
-  ) then raise exception 'Not authorized' using errcode = '42501'; end if;
+  if not public.admin_has_access(array['superadmin', 'finance']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
   if p_status not in ('pending', 'processing', 'successful', 'failed', 'reversed') then
     raise exception 'Invalid payout status';
   end if;
@@ -2034,11 +2027,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not exists (
-    select 1 from public.platform_admins pa
-    where pa.id = auth.uid()
-      and pa.role in ('superadmin', 'finance', 'operations')
-  ) then
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations']) then
     raise exception 'Not authorized' using errcode = '42501';
   end if;
 
@@ -2055,3 +2044,605 @@ $$;
 
 revoke all on function public.admin_get_refund_booking(text) from public, anon;
 grant execute on function public.admin_get_refund_booking(text) to authenticated;
+
+create or replace function public.admin_prepare_refund(
+  p_booking_id text,
+  p_amount_kobo integer default null
+)
+returns table (
+  refund_id bigint,
+  paystack_reference text,
+  amount_kobo integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  booking_row public.appointments%rowtype;
+  already_reserved bigint;
+  requested_amount integer;
+  created_refund_id bigint;
+begin
+  if not public.admin_has_access(array['superadmin', 'finance', 'operations']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_amount_kobo is not null and p_amount_kobo <= 0 then
+    raise exception 'Refund amount must be a positive whole number in kobo';
+  end if;
+
+  select a.* into booking_row
+  from public.appointments a
+  where a.id = p_booking_id and a.payment_status = 'paid'
+    and nullif(a.paystack_reference, '') is not null
+  for update;
+  if not found then raise exception 'Paid Paystack booking not found'; end if;
+
+  select coalesce(sum(r.amount_kobo), 0)::bigint into already_reserved
+  from public.platform_refund_records r
+  where r.booking_id = p_booking_id
+    and r.status in ('pending', 'processing', 'successful');
+
+  requested_amount := coalesce(p_amount_kobo, booking_row.deposit_paid_kobo - already_reserved::integer);
+  if requested_amount <= 0
+    or requested_amount::bigint + already_reserved > booking_row.deposit_paid_kobo then
+    raise exception 'Refund amount exceeds the remaining refundable deposit';
+  end if;
+
+  insert into public.platform_refund_records (
+    booking_id, paystack_reference, amount_kobo, status, requested_by
+  ) values (
+    p_booking_id, booking_row.paystack_reference, requested_amount, 'pending', auth.uid()
+  ) returning id into created_refund_id;
+
+  return query select created_refund_id, booking_row.paystack_reference, requested_amount;
+end;
+$$;
+revoke all on function public.admin_prepare_refund(text, integer) from public, anon;
+grant execute on function public.admin_prepare_refund(text, integer) to authenticated;
+
+-- =========================================================================
+-- OPERATIONAL GROWTH: SUPPORT, CUSTOMER CARE, REPORTS AND ADMIN LIFECYCLE
+-- =========================================================================
+
+alter table public.platform_admins
+  add column if not exists is_active boolean not null default true;
+
+alter table public.platform_webhook_events
+  add column if not exists processing_status text not null default 'processed'
+    check (processing_status in ('processing', 'processed', 'failed')),
+  add column if not exists error_message text,
+  add column if not exists attempt_count integer not null default 1,
+  add column if not exists last_attempt_at timestamptz not null default now();
+
+create index if not exists platform_webhook_events_status_idx
+  on public.platform_webhook_events (processing_status, last_attempt_at desc);
+
+create table if not exists public.platform_support_tickets (
+  id bigint generated always as identity primary key,
+  subject text not null,
+  description text not null,
+  category text not null default 'general'
+    check (category in ('general', 'booking', 'payment', 'payout', 'verification', 'account')),
+  priority text not null default 'normal'
+    check (priority in ('low', 'normal', 'high', 'urgent')),
+  status text not null default 'open'
+    check (status in ('open', 'in_progress', 'waiting', 'resolved', 'closed')),
+  business_id text references public.businesses(business_id) on delete set null,
+  customer_name text,
+  customer_email text,
+  customer_phone text,
+  assigned_admin_id uuid references public.platform_admins(id) on delete set null,
+  resolution text,
+  created_by uuid references auth.users(id) on delete set null,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+create index if not exists platform_support_tickets_status_idx
+  on public.platform_support_tickets (status, priority, created_at desc);
+create index if not exists platform_support_tickets_business_idx
+  on public.platform_support_tickets (business_id, created_at desc);
+alter table public.platform_support_tickets enable row level security;
+revoke all on public.platform_support_tickets from public, anon, authenticated;
+
+create table if not exists public.platform_customer_restrictions (
+  id bigint generated always as identity primary key,
+  business_id text not null references public.businesses(business_id) on delete cascade,
+  client_phone text,
+  client_email text,
+  reason text not null,
+  is_active boolean not null default true,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (nullif(btrim(coalesce(client_phone, '')), '') is not null
+    or nullif(btrim(coalesce(client_email, '')), '') is not null)
+);
+
+create unique index if not exists platform_customer_restrictions_phone_uidx
+  on public.platform_customer_restrictions (business_id, client_phone)
+  where client_phone is not null;
+create unique index if not exists platform_customer_restrictions_email_uidx
+  on public.platform_customer_restrictions (business_id, lower(client_email))
+  where client_email is not null;
+alter table public.platform_customer_restrictions enable row level security;
+revoke all on public.platform_customer_restrictions from public, anon, authenticated;
+
+create or replace function public.prevent_restricted_customer_booking()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.platform_customer_restrictions r
+    where r.business_id = new.business_id
+      and r.is_active
+      and (
+        (r.client_phone is not null and r.client_phone = new.client_phone)
+        or (r.client_email is not null and lower(r.client_email) = lower(new.client_email))
+      )
+  ) then
+    raise exception 'This customer is unable to book with this studio. Please contact support.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists appointments_prevent_restricted_customer on public.appointments;
+create trigger appointments_prevent_restricted_customer
+  before insert on public.appointments
+  for each row execute function public.prevent_restricted_customer_booking();
+
+create table if not exists public.platform_financial_reports (
+  id bigint generated always as identity primary key,
+  period_start date not null,
+  period_end date not null,
+  booking_count bigint not null default 0,
+  paid_booking_count bigint not null default 0,
+  gross_booking_value integer not null default 0,
+  deposits_collected_kobo bigint not null default 0,
+  refunds_kobo bigint not null default 0,
+  successful_payouts_kobo bigint not null default 0,
+  failed_payout_count bigint not null default 0,
+  generated_by uuid references auth.users(id) on delete set null,
+  generated_at timestamptz not null default now(),
+  unique (period_start, period_end),
+  check (period_end >= period_start)
+);
+alter table public.platform_financial_reports enable row level security;
+revoke all on public.platform_financial_reports from public, anon, authenticated;
+
+create or replace function public.admin_create_support_ticket(
+  p_subject text,
+  p_description text,
+  p_category text default 'general',
+  p_priority text default 'normal',
+  p_business_id text default null,
+  p_customer_name text default null,
+  p_customer_email text default null,
+  p_customer_phone text default null,
+  p_assigned_admin_id uuid default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare ticket_id bigint;
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'support']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if length(btrim(coalesce(p_subject, ''))) not between 3 and 160
+    or length(btrim(coalesce(p_description, ''))) not between 3 and 5000
+    or p_category is null or p_category not in ('general', 'booking', 'payment', 'payout', 'verification', 'account')
+    or p_priority is null or p_priority not in ('low', 'normal', 'high', 'urgent') then
+    raise exception 'Invalid support ticket details';
+  end if;
+  if p_business_id is not null and not exists (
+    select 1 from public.businesses b where b.business_id = p_business_id
+  ) then raise exception 'Studio not found'; end if;
+  if p_assigned_admin_id is not null and not exists (
+    select 1 from public.platform_admins pa where pa.id = p_assigned_admin_id and pa.is_active
+  ) then raise exception 'Assigned admin is unavailable'; end if;
+
+  insert into public.platform_support_tickets (
+    subject, description, category, priority, business_id,
+    customer_name, customer_email, customer_phone, assigned_admin_id, created_by
+  ) values (
+    btrim(p_subject), btrim(p_description), p_category, p_priority, p_business_id,
+    nullif(btrim(coalesce(p_customer_name, '')), ''),
+    nullif(btrim(coalesce(p_customer_email, '')), ''),
+    nullif(btrim(coalesce(p_customer_phone, '')), ''),
+    p_assigned_admin_id, auth.uid()
+  ) returning id into ticket_id;
+
+  return ticket_id;
+end;
+$$;
+
+create or replace function public.admin_list_support_tickets(
+  p_status text default 'all',
+  p_search text default null
+)
+returns table (
+  ticket_id bigint, subject text, description text, category text, priority text,
+  status text, business_id text, business_name text, customer_name text,
+  customer_email text, customer_phone text, assigned_admin_id uuid,
+  assigned_admin_email text, resolution text, created_at timestamptz,
+  updated_at timestamptz, total_count bigint
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'support', 'auditor']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_status is null or p_status not in ('all', 'open', 'in_progress', 'waiting', 'resolved', 'closed') then
+    raise exception 'Invalid ticket status';
+  end if;
+  return query
+  select t.id, t.subject, t.description, t.category, t.priority, t.status, t.business_id,
+    b.business_name, t.customer_name, t.customer_email, t.customer_phone,
+    t.assigned_admin_id, pa.email, t.resolution, t.created_at, t.updated_at,
+    count(*) over()::bigint
+  from public.platform_support_tickets t
+  left join public.businesses b on b.business_id = t.business_id
+  left join public.platform_admins pa on pa.id = t.assigned_admin_id
+  where (p_status = 'all' or t.status = p_status)
+    and (nullif(btrim(p_search), '') is null
+      or t.subject ilike '%' || btrim(p_search) || '%'
+      or coalesce(t.customer_email, '') ilike '%' || btrim(p_search) || '%'
+      or coalesce(t.customer_phone, '') ilike '%' || btrim(p_search) || '%'
+      or coalesce(b.business_name, '') ilike '%' || btrim(p_search) || '%')
+  order by case t.priority when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end,
+    t.updated_at desc
+  limit 500;
+end;
+$$;
+
+create or replace function public.admin_update_support_ticket(
+  p_ticket_id bigint,
+  p_status text,
+  p_priority text,
+  p_assigned_admin_id uuid,
+  p_resolution text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  before_row public.platform_support_tickets%rowtype;
+  actor_email text;
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'support']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_status is null or p_status not in ('open', 'in_progress', 'waiting', 'resolved', 'closed')
+    or p_priority is null or p_priority not in ('low', 'normal', 'high', 'urgent') then
+    raise exception 'Invalid ticket update';
+  end if;
+  if p_assigned_admin_id is not null and not exists (
+    select 1 from public.platform_admins pa where pa.id = p_assigned_admin_id and pa.is_active
+  ) then raise exception 'Assigned admin is unavailable'; end if;
+  select t.* into before_row from public.platform_support_tickets t where t.id = p_ticket_id for update;
+  if not found then raise exception 'Ticket not found'; end if;
+  select u.email::text into actor_email from auth.users u where u.id = auth.uid();
+  update public.platform_support_tickets set
+    status = p_status, priority = p_priority, assigned_admin_id = p_assigned_admin_id,
+    resolution = nullif(btrim(coalesce(p_resolution, '')), ''),
+    updated_by = auth.uid(), updated_at = now(),
+    resolved_at = case when p_status in ('resolved', 'closed') then coalesce(resolved_at, now()) else null end
+  where id = p_ticket_id;
+  insert into public.platform_audit_logs(event_type, actor_id, actor_email, entity_type, entity_id, summary, details)
+  values ('support_ticket_updated', auth.uid(), coalesce(actor_email, 'Unknown admin'), 'support_ticket',
+    p_ticket_id::text, 'Updated support ticket: ' || before_row.subject || '.',
+    jsonb_build_object('before_status', before_row.status, 'after_status', p_status,
+      'before_priority', before_row.priority, 'after_priority', p_priority));
+end;
+$$;
+
+create or replace function public.admin_search_customers(p_search text default null)
+returns table (
+  client_id text, business_id text, business_name text, customer_name text,
+  email text, phone text, total_bookings integer, total_spent integer,
+  last_visit date, is_restricted boolean, restriction_reason text
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'support', 'auditor']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  return query
+  select c.id, c.business_id, b.business_name, c.name, c.email, c.phone,
+    c.total_bookings, c.total_spent, c.last_visit,
+    exists (
+      select 1 from public.platform_customer_restrictions r
+      where r.business_id = c.business_id and r.is_active and (
+        (r.client_phone is not null and r.client_phone = c.phone)
+        or (r.client_email is not null and lower(r.client_email) = lower(c.email))
+      )
+    ),
+    (select r.reason from public.platform_customer_restrictions r
+      where r.business_id = c.business_id and r.is_active and (
+        (r.client_phone is not null and r.client_phone = c.phone)
+        or (r.client_email is not null and lower(r.client_email) = lower(c.email))
+      ) order by r.created_at desc limit 1)
+  from public.clients c join public.businesses b on b.business_id = c.business_id
+  where nullif(btrim(p_search), '') is null
+    or c.name ilike '%' || btrim(p_search) || '%'
+    or c.email ilike '%' || btrim(p_search) || '%'
+    or c.phone ilike '%' || btrim(p_search) || '%'
+    or b.business_name ilike '%' || btrim(p_search) || '%'
+  order by c.last_visit desc nulls last, c.name
+  limit 500;
+end;
+$$;
+
+create or replace function public.admin_set_customer_restriction(
+  p_client_id text,
+  p_business_id text,
+  p_is_restricted boolean,
+  p_reason text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  client_row public.clients%rowtype;
+  actor_email text;
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'support']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_is_restricted is null then raise exception 'Restriction state is required'; end if;
+  select c.* into client_row from public.clients c
+  where c.id = p_client_id and c.business_id = p_business_id;
+  if not found then raise exception 'Customer not found'; end if;
+  if p_is_restricted then
+    if nullif(btrim(coalesce(client_row.phone, '')), '') is null
+      and nullif(btrim(coalesce(client_row.email, '')), '') is null then
+      raise exception 'Customer has no phone number or email address to restrict';
+    end if;
+    if nullif(btrim(coalesce(p_reason, '')), '') is null then
+      raise exception 'A restriction reason is required';
+    end if;
+  end if;
+  select u.email::text into actor_email from auth.users u where u.id = auth.uid();
+  if p_is_restricted then
+    if nullif(btrim(client_row.phone), '') is not null then
+      insert into public.platform_customer_restrictions(business_id, client_phone, reason, created_by)
+      values (p_business_id, client_row.phone, btrim(p_reason), auth.uid())
+      on conflict (business_id, client_phone) where client_phone is not null
+      do update set reason = excluded.reason, is_active = true, created_by = auth.uid(), updated_at = now();
+    end if;
+    if nullif(btrim(client_row.email), '') is not null then
+      insert into public.platform_customer_restrictions(business_id, client_email, reason, created_by)
+      values (p_business_id, lower(client_row.email), btrim(p_reason), auth.uid())
+      on conflict (business_id, lower(client_email)) where client_email is not null
+      do update set reason = excluded.reason, is_active = true, created_by = auth.uid(), updated_at = now();
+    end if;
+  else
+    update public.platform_customer_restrictions set is_active = false, updated_at = now()
+    where business_id = p_business_id and (
+      (client_phone is not null and client_phone = client_row.phone)
+      or (client_email is not null and lower(client_email) = lower(client_row.email))
+    );
+  end if;
+  insert into public.platform_audit_logs(event_type, actor_id, actor_email, entity_type, entity_id, summary, details)
+  values ('customer_restriction_updated', auth.uid(), coalesce(actor_email, 'Unknown admin'), 'client',
+    p_client_id, case when p_is_restricted then 'Restricted customer booking access.' else 'Restored customer booking access.' end,
+    jsonb_build_object('business_id', p_business_id, 'restricted', p_is_restricted, 'reason', p_reason));
+end;
+$$;
+
+create or replace function public.admin_list_reports(p_limit integer default 100)
+returns table (
+  report_id bigint, period_start date, period_end date, booking_count bigint,
+  paid_booking_count bigint, gross_booking_value integer, deposits_collected_kobo bigint,
+  refunds_kobo bigint, successful_payouts_kobo bigint, failed_payout_count bigint,
+  generated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.admin_has_access(array['superadmin', 'finance', 'auditor']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 200 then raise exception 'Invalid report limit'; end if;
+  return query select r.id, r.period_start, r.period_end, r.booking_count, r.paid_booking_count,
+    r.gross_booking_value, r.deposits_collected_kobo, r.refunds_kobo,
+    r.successful_payouts_kobo, r.failed_payout_count, r.generated_at
+  from public.platform_financial_reports r order by r.period_start desc limit p_limit;
+end;
+$$;
+
+create or replace function public.admin_generate_financial_report(p_start date, p_end date)
+returns table (
+  report_id bigint, period_start date, period_end date, booking_count bigint,
+  paid_booking_count bigint, gross_booking_value integer, deposits_collected_kobo bigint,
+  refunds_kobo bigint, successful_payouts_kobo bigint, failed_payout_count bigint,
+  generated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  actor_id uuid := auth.uid();
+  report_row public.platform_financial_reports%rowtype;
+begin
+  if coalesce(auth.role(), '') <> 'service_role'
+    and not public.admin_has_access(array['superadmin', 'finance']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_start is null or p_end is null or p_end < p_start or p_end - p_start > 366 then
+    raise exception 'Report period must be valid and no longer than 367 days';
+  end if;
+
+  insert into public.platform_financial_reports (
+    period_start, period_end, booking_count, paid_booking_count, gross_booking_value,
+    deposits_collected_kobo, refunds_kobo, successful_payouts_kobo, failed_payout_count, generated_by
+  )
+  select p_start, p_end,
+    (select count(*) from public.appointments a where a.appointment_date between p_start and p_end),
+    (select count(*) from public.appointments a where a.appointment_date between p_start and p_end and a.payment_status = 'paid'),
+    coalesce((select sum(a.amount) from public.appointments a where a.appointment_date between p_start and p_end and a.payment_status = 'paid'), 0)::integer,
+    coalesce((select sum(a.deposit_paid_kobo) from public.appointments a where a.appointment_date between p_start and p_end and a.payment_status = 'paid'), 0)::bigint,
+    coalesce((select sum(r.amount_kobo) from public.platform_refund_records r join public.appointments a on a.id = r.booking_id
+      where a.appointment_date between p_start and p_end and r.status = 'successful'), 0)::bigint,
+    coalesce((select sum(p.amount_kobo) from public.platform_payout_records p where p.initiated_at::date between p_start and p_end and p.status = 'successful'), 0)::bigint,
+    (select count(*) from public.platform_payout_records p where p.initiated_at::date between p_start and p_end and p.status = 'failed'),
+    actor_id
+  on conflict (period_start, period_end) do update set
+    booking_count = excluded.booking_count,
+    paid_booking_count = excluded.paid_booking_count,
+    gross_booking_value = excluded.gross_booking_value,
+    deposits_collected_kobo = excluded.deposits_collected_kobo,
+    refunds_kobo = excluded.refunds_kobo,
+    successful_payouts_kobo = excluded.successful_payouts_kobo,
+    failed_payout_count = excluded.failed_payout_count,
+    generated_by = excluded.generated_by,
+    generated_at = now()
+  returning * into report_row;
+
+  return query select report_row.id, report_row.period_start, report_row.period_end,
+    report_row.booking_count, report_row.paid_booking_count, report_row.gross_booking_value,
+    report_row.deposits_collected_kobo, report_row.refunds_kobo,
+    report_row.successful_payouts_kobo, report_row.failed_payout_count, report_row.generated_at;
+end;
+$$;
+
+create or replace function public.admin_list_webhook_events(p_limit integer default 100)
+returns table (
+  event_id text, event_type text, processing_status text, error_message text,
+  attempt_count integer, last_attempt_at timestamptz, payload jsonb
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.admin_has_access(array['superadmin', 'operations', 'finance', 'auditor']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 200 then raise exception 'Invalid webhook event limit'; end if;
+  return query select e.event_id, e.event_type, e.processing_status, e.error_message,
+    e.attempt_count, e.last_attempt_at, e.payload
+  from public.platform_webhook_events e order by e.last_attempt_at desc limit p_limit;
+end;
+$$;
+
+create or replace function public.admin_set_platform_admin_active(p_admin_id uuid, p_is_active boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  before_row public.platform_admins%rowtype;
+  actor_email text;
+begin
+  if not public.admin_has_access(array['superadmin']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  if p_admin_id = auth.uid() then raise exception 'You cannot deactivate your own account'; end if;
+  select pa.* into before_row from public.platform_admins pa where pa.id = p_admin_id for update;
+  if not found then raise exception 'Admin not found'; end if;
+  if not p_is_active and before_row.role = 'superadmin' and before_row.is_active
+    and (select count(*) from public.platform_admins pa where pa.role = 'superadmin' and pa.is_active) <= 1 then
+    raise exception 'At least one active superadmin must remain';
+  end if;
+  select u.email::text into actor_email from auth.users u where u.id = auth.uid();
+  update public.platform_admins set is_active = p_is_active, updated_at = now() where id = p_admin_id;
+  insert into public.platform_audit_logs(event_type, actor_id, actor_email, entity_type, entity_id, summary, details)
+  values ('platform_admin_access_updated', auth.uid(), coalesce(actor_email, 'Unknown admin'),
+    'platform_admin', p_admin_id::text, case when p_is_active then 'Reactivated admin account.' else 'Deactivated admin account.' end,
+    jsonb_build_object('email', before_row.email, 'role', before_row.role,
+      'before_active', before_row.is_active, 'after_active', p_is_active));
+end;
+$$;
+
+create or replace function public.admin_get_login_policy()
+returns table (role text, requires_2fa boolean, is_active boolean)
+language sql
+security definer
+set search_path = ''
+as $$
+  select pa.role, pa.requires_2fa, pa.is_active
+  from public.platform_admins pa
+  where pa.id = auth.uid()
+$$;
+
+create or replace function public.admin_mark_last_seen()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.platform_admins set last_seen_at = now()
+  where id = auth.uid() and is_active;
+  if not found then raise exception 'Active admin account not found' using errcode = '42501'; end if;
+end;
+$$;
+
+revoke all on function public.admin_create_support_ticket(text, text, text, text, text, text, text, text, uuid) from public, anon;
+grant execute on function public.admin_create_support_ticket(text, text, text, text, text, text, text, text, uuid) to authenticated;
+revoke all on function public.admin_list_support_tickets(text, text) from public, anon;
+grant execute on function public.admin_list_support_tickets(text, text) to authenticated;
+revoke all on function public.admin_update_support_ticket(bigint, text, text, uuid, text) from public, anon;
+grant execute on function public.admin_update_support_ticket(bigint, text, text, uuid, text) to authenticated;
+revoke all on function public.admin_search_customers(text) from public, anon;
+grant execute on function public.admin_search_customers(text) to authenticated;
+revoke all on function public.admin_set_customer_restriction(text, text, boolean, text) from public, anon;
+grant execute on function public.admin_set_customer_restriction(text, text, boolean, text) to authenticated;
+revoke all on function public.admin_list_reports(integer) from public, anon;
+grant execute on function public.admin_list_reports(integer) to authenticated;
+revoke all on function public.admin_generate_financial_report(date, date) from public, anon;
+grant execute on function public.admin_generate_financial_report(date, date) to authenticated, service_role;
+revoke all on function public.admin_list_webhook_events(integer) from public, anon;
+grant execute on function public.admin_list_webhook_events(integer) to authenticated;
+revoke all on function public.admin_set_platform_admin_active(uuid, boolean) from public, anon;
+grant execute on function public.admin_set_platform_admin_active(uuid, boolean) to authenticated;
+revoke all on function public.admin_get_login_policy() from public, anon;
+grant execute on function public.admin_get_login_policy() to authenticated;
+revoke all on function public.admin_mark_last_seen() from public, anon;
+grant execute on function public.admin_mark_last_seen() to authenticated;
+
+create or replace function public.admin_list_platform_admins_v2()
+returns table (
+  admin_id uuid, email text, role text, requires_2fa boolean,
+  last_seen_at timestamptz, created_at timestamptz, is_active boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.admin_has_access(array['superadmin']) then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  return query select pa.id, pa.email, pa.role, pa.requires_2fa, pa.last_seen_at, pa.created_at, pa.is_active
+    from public.platform_admins pa order by pa.created_at desc;
+end;
+$$;
+revoke all on function public.admin_list_platform_admins_v2() from public, anon;
+grant execute on function public.admin_list_platform_admins_v2() to authenticated;

@@ -41,6 +41,7 @@ export default function AdminSplitLedgerPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all')
   const [isLoading, setIsLoading] = useState(true)
+  const [isExporting, setIsExporting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
@@ -97,9 +98,34 @@ export default function AdminSplitLedgerPage() {
   const paidBookings = filteredBookings.filter((booking) => booking.payment_status === 'paid')
   const depositsKobo = paidBookings.reduce((total, booking) => total + Number(booking.deposit_paid_kobo), 0)
 
-  const exportBookings = () => {
+  const exportBookings = async () => {
+    setIsExporting(true)
+    setErrorMessage('')
+    try {
+      const supabase = createSupabaseClient()
+      const allBookings: BookingRecord[] = []
+      for (let offset = 0; ; offset += 100) {
+        const { data, error } = await supabase.rpc('admin_search_bookings', {
+          p_search: searchQuery.trim() || null,
+          p_payment_status: statusFilter,
+          p_outcome: 'all',
+          p_limit: 100,
+          p_offset: offset,
+        })
+        if (error) throw error
+        const rows = (data ?? []) as BookingRecord[]
+        allBookings.push(...rows)
+        if (rows.length < 100) break
+      }
+
+      const cutoff = timeFilter === 'all'
+        ? 0
+        : Date.now() - Number(timeFilter) * 24 * 60 * 60 * 1000
+      const exportRows = allBookings.filter((booking) => (
+        !cutoff || new Date(booking.created_at).getTime() >= cutoff
+      ))
     const columns = ['Reference', 'Studio', 'Client', 'Booking date', 'Booking value (NGN)', 'Deposit paid (NGN)', 'Payment status']
-    const rows = filteredBookings.map((booking) => [
+    const rows = exportRows.map((booking) => [
       booking.paystack_reference || booking.booking_id,
       booking.business_name,
       booking.client_name,
@@ -117,6 +143,11 @@ export default function AdminSplitLedgerPage() {
     link.download = 'booka-booking-payments.csv'
     link.click()
     URL.revokeObjectURL(url)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not export booking payments.')
+    } finally {
+      setIsExporting(false)
+    }
   }
 
   const updatePaymentOutcome = async (
@@ -182,12 +213,12 @@ export default function AdminSplitLedgerPage() {
         </div>
         <button
           type="button"
-          onClick={exportBookings}
-          disabled={filteredBookings.length === 0}
+          onClick={() => void exportBookings()}
+          disabled={isLoading || isExporting || filteredBookings.length === 0}
           className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-[#ded8cf] bg-white px-4 py-2.5 text-xs font-medium shadow-sm hover:bg-[#faf7f2] disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
         >
           <Download className="size-3.5 text-[#756f69]" />
-          <span>Export filtered records</span>
+          <span>{isExporting ? 'Exporting all matches…' : 'Export all filtered records'}</span>
         </button>
       </div>
 

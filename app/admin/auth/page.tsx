@@ -111,6 +111,8 @@ export default function AdminLoginPage() {
           }
         }
 
+        const { error: lastSeenError } = await supabase.rpc('admin_mark_last_seen')
+        if (lastSeenError) throw lastSeenError
         router.replace('/admin')
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : 'Invalid 2FA code. Please check your authenticator app.')
@@ -140,18 +142,24 @@ export default function AdminLoginPage() {
       // 2. Verify platform admin clearance
       const { data: adminRecord, error: adminErr } = await supabase
         .from('platform_admins')
-        .select('*')
+        .select('role, requires_2fa, is_active')
         .eq('id', signInData.user.id)
         .maybeSingle()
 
-      if (adminErr || !adminRecord) {
+      if (adminErr || !adminRecord || !adminRecord.is_active) {
         setErrorMessage('Access denied. This account does not have platform admin privileges.')
         setIsLoading(false)
         await supabase.auth.signOut()
         return
       }
 
-      // 3. Setup QR Code & transition to 2FA challenge screen
+      if (!adminRecord.requires_2fa) {
+        const { error: lastSeenError } = await supabase.rpc('admin_mark_last_seen')
+        if (lastSeenError) throw lastSeenError
+        router.replace('/admin')
+        return
+      }
+
       await prepare2FA(supabase, email.trim(), signInData.user.id)
       setUserId(signInData.user.id)
       setAwaiting2FA(true)

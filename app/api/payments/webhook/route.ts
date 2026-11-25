@@ -54,22 +54,52 @@ export async function POST(request: Request) {
       event_id: eventId,
       event_type: event.event,
       payload: event,
+      processing_status: 'processing',
+      attempt_count: 1,
+      last_attempt_at: new Date().toISOString(),
     })
   if (eventError) {
     if (eventError.code === '23505') {
-      return Response.json({ received: true, duplicate: true })
+      const { data: previousEvent, error: previousEventError } = await supabase
+        .from('platform_webhook_events')
+        .select('processing_status, attempt_count')
+        .eq('event_id', eventId)
+        .maybeSingle()
+      if (previousEventError) {
+        console.error('Could not inspect duplicate Paystack webhook:', previousEventError.message)
+        return Response.json({ error: 'Could not process webhook.' }, { status: 500 })
+      }
+      if (previousEvent?.processing_status === 'processed') {
+        return Response.json({ received: true, duplicate: true })
+      }
+      const { error: retryError } = await supabase
+        .from('platform_webhook_events')
+        .update({
+          processing_status: 'processing',
+          error_message: null,
+          attempt_count: (previousEvent?.attempt_count ?? 0) + 1,
+          last_attempt_at: new Date().toISOString(),
+        })
+        .eq('event_id', eventId)
+      if (retryError) {
+        console.error('Could not retry Paystack webhook:', retryError.message)
+        return Response.json({ error: 'Could not retry webhook.' }, { status: 500 })
+      }
+    } else {
+      console.error('Could not persist Paystack webhook:', eventError.message)
+      return Response.json({ error: 'Could not process webhook.' }, { status: 500 })
     }
-    console.error('Could not persist Paystack webhook:', eventError.message)
-    return Response.json({ error: 'Could not process webhook.' }, { status: 500 })
   }
 
+  try {
   if (event.event === 'charge.success' && data) {
     const reference = typeof data.reference === 'string' ? data.reference : null
     if (reference) {
-      await supabase
+      const { error } = await supabase
         .from('appointments')
         .update({ payment_status: 'paid' })
         .eq('paystack_reference', reference)
+      if (error) throw error
     }
   }
 
@@ -90,47 +120,86 @@ export async function POST(request: Request) {
     let refundStatus: 'processing' | 'successful' | 'failed' | 'reversed' = 'processing'
     if (event.event === 'refund.processed' || data.status === 'processed') refundStatus = 'successful'
     if (event.event === 'refund.failed' || data.status === 'failed') refundStatus = 'failed'
+    if (event.event === 'refund.reversed' || data.status === 'reversed') refundStatus = 'reversed'
 
-    let refundQuery = supabase.from('platform_refund_records').select('booking_id').limit(1)
+    let refundQuery = supabase.from('platform_refund_records').select('id, booking_id').limit(1)
     if (refundReference) refundQuery = refundQuery.eq('paystack_refund_reference', refundReference)
     else if (transactionReference) refundQuery = refundQuery.eq('paystack_reference', transactionReference)
 
-    const { data: refundRows } = await refundQuery
-    const bookingId = Array.isArray(refundRows) && refundRows[0]?.booking_id
-      ? String(refundRows[0].booking_id)
+    const { data: refundRows, error: refundLookupError } = await refundQuery
+    if (refundLookupError) throw refundLookupError
+    const refundRow = Array.isArray(refundRows) ? refundRows[0] : null
+    const bookingId = refundRow?.booking_id
+      ? String(refundRow.booking_id)
       : null
 
-    if (bookingId) {
-      await supabase
+    if (!bookingId || !refundRow) throw new Error('Refund webhook does not match a refund record.')
+    {
+      const { error } = await supabase
         .from('platform_refund_records')
         .update({
           status: refundStatus,
           failure_reason: data.status === 'failed' && typeof data.gateway_response === 'string'
             ? data.gateway_response
             : null,
-          completed_at: refundStatus === 'successful' || refundStatus === 'failed'
+          completed_at: refundStatus === 'successful' || refundStatus === 'failed' || refundStatus === 'reversed'
             ? new Date().toISOString()
             : null,
           updated_at: new Date().toISOString(),
         })
-        .eq('booking_id', bookingId)
+        .eq('id', refundRow.id)
+      if (error) throw error
 
-      await supabase
+        const { data: refundRowsForBooking, error: refundTotalsError } = await supabase
+          .from('platform_refund_records')
+          .select('amount_kobo, status')
+          .eq('booking_id', bookingId)
+        if (refundTotalsError) throw refundTotalsError
+        const { data: booking, error: bookingLookupError } = await supabase
+          .from('appointments')
+          .select('deposit_paid_kobo, payment_outcome, payment_outcome_note')
+          .eq('id', bookingId)
+          .maybeSingle()
+        if (bookingLookupError) throw bookingLookupError
+        if (!booking || typeof booking.deposit_paid_kobo !== 'number') {
+          throw new Error('Refund webhook booking could not be reconciled.')
+        }
+
+        const successfulRefundAmount = (refundRowsForBooking ?? [])
+          .filter((refund) => refund.status === 'successful')
+          .reduce((total, refund) => total + refund.amount_kobo, 0)
+        const hasPendingRefund = (refundRowsForBooking ?? [])
+          .some((refund) => refund.status === 'pending' || refund.status === 'processing')
+        const refundOutcome = successfulRefundAmount >= booking.deposit_paid_kobo && booking.deposit_paid_kobo > 0
+          ? 'refunded'
+          : hasPendingRefund
+            ? 'refund_pending'
+            : 'normal'
+        const preserveManualOutcome = booking.payment_outcome === 'disputed' || booking.payment_outcome === 'chargeback'
+        const paymentOutcome = preserveManualOutcome && refundOutcome !== 'refunded'
+          ? booking.payment_outcome
+          : refundOutcome
+        const paymentOutcomeNote = preserveManualOutcome && refundOutcome !== 'refunded'
+          ? booking.payment_outcome_note
+          : paymentOutcome === 'refunded'
+          ? 'Full refund confirmed by Paystack.'
+          : hasPendingRefund
+            ? 'A Paystack refund is still processing.'
+            : successfulRefundAmount > 0
+              ? 'Partial refund confirmed by Paystack.'
+              : refundStatus === 'reversed'
+                ? 'Paystack reversed the refund.'
+                : 'Paystack refund failed.'
+
+      const { error: bookingUpdateError } = await supabase
         .from('appointments')
         .update({
-          payment_outcome: refundStatus === 'successful'
-            ? 'refunded'
-            : refundStatus === 'failed'
-              ? 'normal'
-              : 'refund_pending',
-          payment_outcome_note: refundStatus === 'successful'
-            ? 'Refund confirmed by Paystack.'
-            : refundStatus === 'failed'
-              ? 'Paystack refund failed.'
-              : 'Paystack refund is processing.',
+            payment_outcome: paymentOutcome,
+            payment_outcome_note: paymentOutcomeNote,
           payment_outcome_updated_at: new Date().toISOString(),
         })
         .eq('id', bookingId)
+      if (bookingUpdateError) throw bookingUpdateError
     }
   }
 
@@ -145,13 +214,13 @@ export async function POST(request: Request) {
       ? recipient.metadata.business_id
       : null
 
-    if (typeof businessId === 'string' && typeof data.amount === 'number') {
+    if (typeof businessId === 'string' && typeof data.amount === 'number' && typeof data.transfer_code === 'string') {
       let payoutStatus: 'processing' | 'successful' | 'failed' | 'reversed' = 'processing'
       if (event.event === 'transfer.success') payoutStatus = 'successful'
       if (event.event === 'transfer.failed') payoutStatus = 'failed'
       if (event.event === 'transfer.reversed') payoutStatus = 'reversed'
 
-      await supabase
+      const { error } = await supabase
         .from('platform_payout_records')
         .upsert({
           business_id: businessId,
@@ -168,7 +237,26 @@ export async function POST(request: Request) {
           onConflict: 'paystack_transfer_code',
           ignoreDuplicates: false,
         })
+      if (error) throw error
+    } else if (['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event.event)) {
+      throw new Error('Transfer event could not be matched to a payout record.')
     }
+  }
+
+    const { error: processedError } = await supabase
+      .from('platform_webhook_events')
+      .update({ processing_status: 'processed', error_message: null })
+      .eq('event_id', eventId)
+    if (processedError) throw processedError
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Webhook processing failed.'
+    const { error: statusError } = await supabase
+      .from('platform_webhook_events')
+      .update({ processing_status: 'failed', error_message: message })
+      .eq('event_id', eventId)
+    if (statusError) console.error('Could not save Paystack webhook failure:', statusError.message)
+    console.error('Paystack webhook processing failed:', message)
+    return Response.json({ error: 'Webhook processing failed.' }, { status: 500 })
   }
 
   return Response.json({ received: true })

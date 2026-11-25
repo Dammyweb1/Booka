@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Download } from 'lucide-react'
 import { createSupabaseClient } from '@/lib/supabase'
 
 interface PayoutRecord {
@@ -22,11 +23,29 @@ const formatNaira = (kobo: number) => new Intl.NumberFormat('en-NG', {
   maximumFractionDigits: 0,
 }).format(kobo / 100)
 
+const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
+
 export default function AdminPayoutsPage() {
   const [payouts, setPayouts] = useState<PayoutRecord[]>([])
   const [status, setStatus] = useState('all')
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
+
+  const exportPayouts = () => {
+    const header = ['Studio', 'Business ID', 'Reference', 'Transfer code', 'Amount (NGN)', 'Status', 'Failure reason', 'Initiated', 'Completed']
+    const rows = payouts.map((payout) => [
+      payout.business_name, payout.business_id, payout.paystack_reference,
+      payout.paystack_transfer_code, payout.amount_kobo / 100, payout.status,
+      payout.failure_reason, payout.initiated_at, payout.completed_at,
+    ])
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'booka-payouts.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   useEffect(() => {
     let active = true
@@ -83,19 +102,24 @@ export default function AdminPayoutsPage() {
           <h1 className="mt-3 text-2xl font-medium tracking-tight sm:text-3xl">Payout reconciliation</h1>
           <p className="mt-1 text-sm text-[#756f69]">Monitor and reconcile studio settlement records.</p>
         </div>
-        <select
-          value={status}
-          onChange={(event) => setStatus(event.target.value)}
-          className="h-10 rounded-xl border border-[#ded8cf] bg-white px-3 text-xs"
-          aria-label="Payout status"
-        >
-          <option value="all">All statuses</option>
-          <option value="pending">Pending</option>
-          <option value="processing">Processing</option>
-          <option value="successful">Successful</option>
-          <option value="failed">Failed</option>
-          <option value="reversed">Reversed</option>
-        </select>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button type="button" onClick={exportPayouts} disabled={!payouts.length} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#ded8cf] bg-white px-3 text-xs font-medium disabled:opacity-50">
+            <Download className="size-3.5" /> Export
+          </button>
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className="h-10 rounded-xl border border-[#ded8cf] bg-white px-3 text-xs"
+            aria-label="Payout status"
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="processing">Processing</option>
+            <option value="successful">Successful</option>
+            <option value="failed">Failed</option>
+            <option value="reversed">Reversed</option>
+          </select>
+        </div>
       </div>
 
       {errorMessage && (

@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   const partialAmount = body.amountKobo
   if (
     partialAmount !== undefined &&
-    (!Number.isInteger(partialAmount) || partialAmount <= 0)
+    (typeof partialAmount !== 'number' || !Number.isInteger(partialAmount) || partialAmount <= 0)
   ) {
     return Response.json({ error: 'Refund amount must be a positive whole number in kobo.' }, { status: 400 })
   }
@@ -54,32 +54,39 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Unauthorized.' }, { status: 401 })
   }
 
-  const { data: bookingRows, error: bookingError } = await userClient.rpc(
-    'admin_get_refund_booking',
-    { p_booking_id: body.bookingId }
+  const { data: refundRows, error: refundPreparationError } = await userClient.rpc(
+    'admin_prepare_refund',
+    {
+      p_booking_id: body.bookingId,
+      p_amount_kobo: typeof partialAmount === 'number' ? partialAmount : null,
+    }
   )
-  if (bookingError) {
-    return Response.json({ error: 'You are not authorized to process refunds.' }, { status: 403 })
+  if (refundPreparationError) {
+    const message = refundPreparationError.message
+    const status = message.includes('Not authorized') ? 403
+      : message.includes('not found') ? 404
+        : message.includes('Refund amount') ? 400
+          : 500
+    return Response.json({ error: message }, { status })
   }
-  const booking = Array.isArray(bookingRows) ? bookingRows[0] as Record<string, unknown> | undefined : undefined
-  if (!booking) {
-    return Response.json({ error: 'Paid Paystack booking not found.' }, { status: 404 })
-  }
-
-  const paystackReference = booking.paystack_reference
-  const availableAmount = booking.amount_kobo
+  const refund = Array.isArray(refundRows)
+    ? refundRows[0] as Record<string, unknown> | undefined
+    : undefined
   if (
-    typeof paystackReference !== 'string' ||
-    !Number.isInteger(availableAmount) ||
-    typeof availableAmount !== 'number'
+    !refund ||
+    typeof refund.refund_id !== 'number' ||
+    typeof refund.paystack_reference !== 'string' ||
+    typeof refund.amount_kobo !== 'number' ||
+    !Number.isInteger(refund.amount_kobo)
   ) {
-    return Response.json({ error: 'Booking refund details are invalid.' }, { status: 400 })
+    return Response.json({ error: 'Refund reservation could not be verified.' }, { status: 500 })
   }
-
-  const refundAmount = partialAmount === undefined ? availableAmount : partialAmount
-  if (refundAmount > availableAmount) {
-    return Response.json({ error: 'Refund amount exceeds the original deposit.' }, { status: 400 })
-  }
+  const refundId = refund.refund_id
+  const paystackReference = refund.paystack_reference
+  const refundAmount = refund.amount_kobo
+  const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
 
   let paystackResponse: Response
   try {
@@ -96,14 +103,32 @@ export async function POST(request: Request) {
       cache: 'no-store',
       signal: AbortSignal.timeout(15000),
     })
-  } catch {
-    return Response.json({ error: 'Could not connect to Paystack.' }, { status: 502 })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not connect to Paystack.'
+    const { error: reservationError } = await adminSupabase
+      .from('platform_refund_records')
+      .update({ failure_reason: `Paystack request outcome is unknown: ${message}` })
+      .eq('id', refundId)
+    if (reservationError) {
+      console.error('Could not annotate uncertain Paystack refund:', reservationError.message)
+      return Response.json({
+        error: 'Paystack request outcome is unknown and the refund reservation could not be annotated. Reconcile this refund in Paystack before retrying.',
+      }, { status: 502 })
+    }
+    return Response.json({
+      error: 'Paystack request outcome is unknown. Reconcile this refund in Paystack before retrying.',
+    }, { status: 502 })
   }
 
   let result: unknown
   try {
     result = await paystackResponse.json()
   } catch {
+    const { error: reservationError } = await adminSupabase
+      .from('platform_refund_records')
+      .update({ failure_reason: 'Paystack returned an unreadable response; initiation outcome is unknown.' })
+      .eq('id', refundId)
+    if (reservationError) console.error('Could not annotate unreadable Paystack refund response:', reservationError.message)
     return Response.json({ error: 'Paystack returned an invalid refund response.' }, { status: 502 })
   }
 
@@ -111,6 +136,20 @@ export async function POST(request: Request) {
     const message = isRecord(result) && typeof result.message === 'string'
       ? result.message
       : 'Paystack could not initiate the refund.'
+    const { error: refundUpdateError } = await adminSupabase
+      .from('platform_refund_records')
+      .update({
+        status: 'failed',
+        failure_reason: message,
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', refundId)
+    if (refundUpdateError) {
+      console.error('Could not release failed refund reservation:', refundUpdateError.message)
+      return Response.json({
+        error: `${message} The refund reservation could not be updated; reconcile it before retrying.`,
+      }, { status: 502 })
+    }
     return Response.json({ error: message }, { status: 502 })
   }
 
@@ -119,30 +158,48 @@ export async function POST(request: Request) {
     ? refundData.reference
     : null
 
-  const adminSupabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
+  if (!refundReference) {
+    const { error: reservationError } = await adminSupabase
+      .from('platform_refund_records')
+      .update({ failure_reason: 'Paystack accepted the refund but returned no refund reference.' })
+      .eq('id', refundId)
+    if (reservationError) console.error('Could not annotate unreferenced Paystack refund:', reservationError.message)
+    return Response.json({
+      error: 'Paystack accepted the refund but returned no refund reference. Reconcile it before retrying.',
+    }, { status: 502 })
+  }
 
-  await adminSupabase.from('platform_refund_records').insert({
-    booking_id: body.bookingId,
-    paystack_reference: paystackReference,
-    paystack_refund_reference: refundReference,
-    amount_kobo: refundAmount,
-    status: 'processing',
-    requested_by: authData.user.id,
-  })
+  const { error: refundUpdateError } = await adminSupabase
+    .from('platform_refund_records')
+    .update({
+      paystack_refund_reference: refundReference,
+      status: 'processing',
+      failure_reason: null,
+    })
+    .eq('id', refundId)
+  if (refundUpdateError) {
+    console.error('Paystack accepted a refund but its record could not be updated:', refundUpdateError.message)
+    return Response.json({
+      error: 'Paystack accepted the refund, but Booka could not update its tracking record. Reconcile it before retrying.',
+    }, { status: 502 })
+  }
 
-  await userClient.rpc('admin_update_payment_outcome', {
+  const { error: outcomeError } = await userClient.rpc('admin_update_payment_outcome', {
     p_booking_id: body.bookingId,
     p_outcome: 'refund_pending',
-    p_note: partialAmount === undefined
-      ? 'Full sandbox refund submitted through Paystack.'
-      : `Partial sandbox refund submitted through Paystack: ${refundAmount} kobo.`,
+    p_note: `Sandbox refund submitted through Paystack: ${refundAmount} kobo.`,
   })
+  if (outcomeError) {
+    console.error('Paystack accepted a refund but the booking outcome could not be updated:', outcomeError.message)
+    return Response.json({
+      error: 'Paystack accepted the refund, but the booking outcome could not be updated. Reconcile it before retrying.',
+    }, { status: 502 })
+  }
 
   return Response.json({
     status: 'refund_pending',
     paystackReference,
     paystackRefundReference: refundReference,
+    refundId,
   })
 }

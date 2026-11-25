@@ -18,6 +18,10 @@ import {
   X,
   Users,
   WalletCards,
+  LifeBuoy,
+  UserRound,
+  ChartNoAxesCombined,
+  Activity,
 } from 'lucide-react'
 import { createSupabaseClient } from '@/lib/supabase'
 
@@ -54,15 +58,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         // Query platform_admins
         const { data: adminRecord, error: adminError } = await supabase
           .from('platform_admins')
-          .select('role')
+          .select('role, is_active, requires_2fa')
           .eq('id', user.id)
           .single()
 
-        if (adminError || !adminRecord?.role || ![
+        if (adminError || !adminRecord?.is_active || !adminRecord?.role || ![
           'superadmin', 'finance', 'operations', 'support', 'auditor',
         ].includes(adminRecord.role)) {
           router.replace('/admin/auth')
           return
+        }
+
+        if (adminRecord.requires_2fa) {
+          const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+          if (assuranceError || assurance.currentLevel !== 'aal2') {
+            router.replace('/admin/auth')
+            return
+          }
         }
 
         setAdminRole(adminRecord.role)
@@ -112,12 +124,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         { label: 'Studios', href: '/admin/studios', icon: Store, roles: ['superadmin', 'finance', 'operations', 'support'] },
         { label: 'Split ledger', href: '/admin/split-ledger', icon: Layers, roles: ['superadmin', 'finance', 'operations', 'support'] },
         { label: 'Payouts', href: '/admin/payouts', icon: WalletCards, roles: ['superadmin', 'finance', 'operations'] },
+        { label: 'Customers', href: '/admin/customers', icon: UserRound, roles: ['superadmin', 'operations', 'support'] },
+        { label: 'Support', href: '/admin/support', icon: LifeBuoy, roles: ['superadmin', 'operations', 'support'] },
       ],
     },
     {
       group: 'GOVERNANCE',
       items: [
         { label: 'Audit logs', href: '/admin/audit-log', icon: FileText, roles: ['superadmin', 'auditor'] },
+        { label: 'Financial reports', href: '/admin/reports', icon: ChartNoAxesCombined, roles: ['superadmin', 'finance', 'auditor'] },
+        { label: 'System health', href: '/admin/health', icon: Activity, roles: ['superadmin', 'operations', 'finance', 'auditor'] },
         { label: 'Team access', href: '/admin/team', icon: Users, roles: ['superadmin'] },
         { label: 'Platform settings', href: '/admin/settings', icon: Settings, roles: ['superadmin'] },
       ],

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Download, Search } from 'lucide-react'
 import { createSupabaseClient } from '@/lib/supabase'
 
 interface AuditEntry {
@@ -35,6 +35,8 @@ const formatTimestamp = (value: string) => new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
 }).format(new Date(value))
+
+const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
 
 export default function AdminAuditLogPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([])
@@ -94,6 +96,41 @@ export default function AdminAuditLogPage() {
     setPage(0)
   }
 
+  const exportAuditLog = async () => {
+    setErrorMessage('')
+    try {
+      const supabase = createSupabaseClient()
+      const allRows: AuditEntry[] = []
+      for (let offset = 0; ; offset += PAGE_SIZE) {
+        const { data, error } = await supabase.rpc('admin_list_audit_logs', {
+          p_limit: PAGE_SIZE,
+          p_offset: offset,
+          p_event_type: eventType,
+          p_search: search.trim() || null,
+        })
+        if (error) throw error
+        const rows = (data ?? []) as AuditEntry[]
+        allRows.push(...rows)
+        if (rows.length < PAGE_SIZE) break
+      }
+
+      const columns = ['Event type', 'Actor', 'Entity type', 'Entity ID', 'Summary', 'Details', 'Created at']
+      const rows = allRows.map((entry) => [
+        entry.event_type, entry.actor_email, entry.entity_type, entry.entity_id,
+        entry.summary, JSON.stringify(entry.details), entry.created_at,
+      ])
+      const csv = [columns, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'booka-audit-log.csv'
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not export audit history.')
+    }
+  }
+
   return (
     <div className="min-w-0 flex-1 p-4 text-[#1e1c1a] sm:p-8 lg:p-10">
       <div className="border-b border-[#ded8cf]/60 pb-6">
@@ -105,9 +142,14 @@ export default function AdminAuditLogPage() {
             <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Audit log</h1>
             <p className="mt-1 text-sm text-[#756f69]">A searchable, persistent record of platform events and admin changes.</p>
           </div>
-          <Link href="/admin/settings" className="inline-flex items-center gap-1 self-start text-xs font-medium text-[#c0593c] hover:underline sm:self-auto">
-            Platform settings <ArrowRight className="size-3.5" />
-          </Link>
+          <div className="flex items-center gap-3 self-start sm:self-auto">
+            <button type="button" onClick={() => void exportAuditLog()} disabled={isLoading || totalCount === 0} className="inline-flex items-center gap-2 rounded-xl border border-[#ded8cf] bg-white px-3 py-2.5 text-xs font-medium disabled:opacity-50">
+              <Download className="size-3.5" /> Export all
+            </button>
+            <Link href="/admin/settings" className="inline-flex items-center gap-1 text-xs font-medium text-[#c0593c] hover:underline">
+              Platform settings <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
         </div>
       </div>
 
