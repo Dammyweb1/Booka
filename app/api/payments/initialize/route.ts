@@ -184,6 +184,39 @@ export async function POST(request: Request) {
     return Response.json({ error: 'One or more selected items are no longer available.' }, { status: 400 })
   }
 
+  const normalizedClientPhone = clientPhone.trim()
+  const normalizedClientEmail = clientEmail.trim().toLowerCase()
+  const [phoneRestriction, emailRestriction] = await Promise.all([
+    supabase
+      .from('platform_customer_restrictions')
+      .select('id')
+      .eq('business_id', business.business_id)
+      .eq('is_active', true)
+      .eq('client_phone', normalizedClientPhone)
+      .maybeSingle(),
+    supabase
+      .from('platform_customer_restrictions')
+      .select('id')
+      .eq('business_id', business.business_id)
+      .eq('is_active', true)
+      .eq('client_email', normalizedClientEmail)
+      .maybeSingle(),
+  ])
+  const restrictionLookupError = phoneRestriction.error ?? emailRestriction.error
+  if (restrictionLookupError) {
+    console.error('Could not check customer booking restriction:', restrictionLookupError)
+    return Response.json(
+      { error: 'Could not verify booking eligibility. Please try again.' },
+      { status: 503 }
+    )
+  }
+  if (phoneRestriction.data || emailRestriction.data) {
+    return Response.json(
+      { error: 'This customer is unable to book with this studio. Please contact support.' },
+      { status: 403 }
+    )
+  }
+
   const totalPrice = selectedAddons.reduce((total, addon) => total + addon.price, 0)
   const depositPaidKobo = Math.round(totalPrice * depositPercent)
   const reference = `booka_${crypto.randomUUID()}`

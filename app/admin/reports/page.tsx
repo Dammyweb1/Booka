@@ -1,7 +1,8 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
-import { Download, FileBarChart } from 'lucide-react'
+import { useRef } from 'react'
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Download, FileBarChart } from 'lucide-react'
 import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface FinancialReport {
@@ -25,6 +26,207 @@ const formatNaira = (kobo: number) => new Intl.NumberFormat('en-NG', {
 }).format(kobo / 100)
 
 const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
+
+const parseDate = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+const dateValue = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function ReportDatePicker({
+  label,
+  value,
+  min,
+  max,
+  today,
+  onChange,
+}: {
+  label: string
+  value: string
+  min?: string
+  max?: string
+  today: string
+  onChange: (value: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const selected = parseDate(value)
+    return new Date(selected.getFullYear(), selected.getMonth(), 1)
+  })
+  const [popoverPosition, setPopoverPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const calendarRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const selected = parseDate(value)
+    setVisibleMonth(new Date(selected.getFullYear(), selected.getMonth(), 1))
+  }, [isOpen, value])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const updatePopoverPosition = () => {
+      const trigger = triggerRef.current
+      const calendar = calendarRef.current
+      if (!trigger || !calendar) return
+
+      const triggerRect = trigger.getBoundingClientRect()
+      const viewportPadding = 8
+      const width = Math.min(288, window.innerWidth - viewportPadding * 2)
+      const height = calendar.getBoundingClientRect().height
+      const left = Math.min(
+        Math.max(viewportPadding, triggerRect.left),
+        window.innerWidth - width - viewportPadding
+      )
+      const below = triggerRect.bottom + viewportPadding
+      const top = below + height <= window.innerHeight - viewportPadding
+        ? below
+        : Math.max(viewportPadding, triggerRect.top - height - viewportPadding)
+
+      setPopoverPosition({ top, left, width })
+    }
+
+    updatePopoverPosition()
+    window.addEventListener('resize', updatePopoverPosition)
+    window.addEventListener('scroll', updatePopoverPosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition)
+      window.removeEventListener('scroll', updatePopoverPosition, true)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !pickerRef.current?.contains(event.target)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [isOpen])
+
+  const monthLabel = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(visibleMonth)
+  const selectedLabel = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parseDate(value))
+  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1)
+  const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate()
+  const leadingDays = (firstDay.getDay() + 6) % 7
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+  return (
+    <div
+      ref={pickerRef}
+      className="relative w-full"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') setIsOpen(false)
+      }}
+    >
+      <span className="text-xs font-medium text-[#514a44]">{label}</span>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={`${label}: ${selectedLabel}`}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={`${label.toLowerCase().replace(/\s+/g, '-')}-calendar`}
+        onClick={() => {
+          setPopoverPosition(null)
+          setIsOpen((open) => !open)
+        }}
+        className="mt-1.5 flex h-11 w-full items-center gap-3 rounded-xl border border-[#ded8cf] bg-white px-3 text-left text-xs font-medium text-[#1e1c1a] outline-none transition hover:border-[#c9b8a8] focus:border-[#c0593c] focus:ring-4 focus:ring-[#c0593c]/10"
+      >
+        <CalendarDays className="size-4 shrink-0 text-[#c0593c]" />
+        <span className="min-w-0 flex-1">{selectedLabel}</span>
+        <ChevronDown className={`size-4 shrink-0 text-[#8c847c] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div
+          ref={calendarRef}
+          id={`${label.toLowerCase().replace(/\s+/g, '-')}-calendar`}
+          role="dialog"
+          aria-label={`${label} calendar`}
+          style={{
+            position: 'fixed',
+            top: popoverPosition?.top ?? 8,
+            left: popoverPosition?.left ?? 8,
+            width: popoverPosition?.width ?? 'min(18rem, calc(100vw - 1rem))',
+            visibility: popoverPosition ? 'visible' : 'hidden',
+          }}
+          className="z-50 max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-2xl border border-[#ded8cf] bg-white p-3 shadow-[0_16px_40px_rgba(30,28,26,0.16)]"
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <button
+              type="button"
+              aria-label="Previous month"
+              onClick={() => setVisibleMonth((month) => new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+              className="grid size-8 place-items-center rounded-lg text-[#756f69] transition hover:bg-[#f5f1eb] hover:text-[#1e1c1a]"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <p className="text-xs font-semibold text-[#1e1c1a]">{monthLabel}</p>
+            <button
+              type="button"
+              aria-label="Next month"
+              onClick={() => setVisibleMonth((month) => new Date(month.getFullYear(), month.getMonth() + 1, 1))}
+              className="grid size-8 place-items-center rounded-lg text-[#756f69] transition hover:bg-[#f5f1eb] hover:text-[#1e1c1a]"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1">
+            {weekdays.map((weekday) => (
+              <span key={weekday} className="grid h-7 place-items-center text-[10px] font-medium text-[#8c847c]">
+                {weekday}
+              </span>
+            ))}
+            {Array.from({ length: 42 }, (_, index) => {
+              const day = index - leadingDays + 1
+              if (day < 1 || day > daysInMonth) return <span key={`blank-${index}`} aria-hidden="true" />
+
+              const currentDate = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day)
+              const currentValue = dateValue(currentDate)
+              const isDisabled = (min !== undefined && currentValue < min) || (max !== undefined && currentValue > max)
+              const isSelected = currentValue === value
+              const isToday = currentValue === today
+
+              return (
+                <button
+                  key={currentValue}
+                  type="button"
+                  aria-label={new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(currentDate)}
+                  aria-pressed={isSelected}
+                  disabled={isDisabled}
+                  onClick={() => {
+                    onChange(currentValue)
+                    setIsOpen(false)
+                  }}
+                  className={`grid aspect-square min-w-0 place-items-center rounded-lg text-[11px] transition disabled:cursor-not-allowed disabled:text-[#d4cec6] ${
+                    isSelected
+                      ? 'bg-[#c0593c] font-semibold text-white'
+                      : isToday
+                        ? 'bg-[#f5ede3] font-semibold text-[#a94931]'
+                        : 'text-[#514a44] hover:bg-[#f5f1eb]'
+                  }`}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AdminReportsPage() {
   const today = new Date().toISOString().slice(0, 10)
@@ -89,7 +291,7 @@ export default function AdminReportsPage() {
   }
 
   return (
-    <div className="min-w-0 flex-1 p-4 text-[#1e1c1a] sm:p-8 lg:p-10">
+    <div className="min-h-[calc(100dvh-3.5rem)] min-w-0 flex-1 p-4 text-[#1e1c1a] sm:p-8 lg:p-10">
       <header className="flex flex-col gap-4 border-b border-[#ded8cf]/60 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs text-[#756f69]">Finance / Reports</p>
@@ -103,13 +305,9 @@ export default function AdminReportsPage() {
 
       {errorMessage && <p role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{errorMessage}</p>}
 
-      <form onSubmit={generateReport} className="mt-6 grid gap-4 rounded-2xl border border-[#ded8cf] bg-white p-5 sm:grid-cols-[1fr_1fr_auto] sm:items-end sm:p-6">
-        <label className="text-xs font-medium">Period start
-          <input required type="date" value={periodStart} max={periodEnd} onChange={(event) => setPeriodStart(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-[#ded8cf] px-3" />
-        </label>
-        <label className="text-xs font-medium">Period end
-          <input required type="date" value={periodEnd} min={periodStart} max={today} onChange={(event) => setPeriodEnd(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-[#ded8cf] px-3" />
-        </label>
+      <form onSubmit={generateReport} className="mt-6 grid gap-4 rounded-2xl border border-[#ded8cf] bg-gradient-to-br from-white to-[#faf8f5] p-5 shadow-sm sm:grid-cols-[1fr_1fr_auto] sm:items-end sm:p-6">
+        <ReportDatePicker label="Period start" value={periodStart} max={periodEnd} today={today} onChange={setPeriodStart} />
+        <ReportDatePicker label="Period end" value={periodEnd} min={periodStart} max={today} today={today} onChange={setPeriodEnd} />
         <button disabled={isGenerating} type="submit" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1e1c1a] px-4 text-xs font-semibold text-white disabled:opacity-50">
           <FileBarChart className="size-4" /> {isGenerating ? 'Generating…' : 'Generate report'}
         </button>

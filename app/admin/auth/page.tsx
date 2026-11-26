@@ -20,7 +20,6 @@ export default function AdminLoginPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null)
   const [factorId, setFactorId] = useState<string | null>(null)
-  const [challengeId, setChallengeId] = useState<string | null>(null)
   const codeInputs = useRef<Array<HTMLInputElement | null>>([])
   const isVerifying2FA = useRef(false)
 
@@ -28,24 +27,18 @@ export default function AdminLoginPage() {
   const [errorMessage, setErrorMessage] = useState('')
 
   // Function to setup or challenge 2FA via Supabase TOTP
-  const prepare2FA = async (client: ReturnType<typeof createSupabaseClient>, adminEmail: string, adminId: string) => {
+  const prepare2FA = async (client: ReturnType<typeof createSupabaseClient>, adminEmail: string, adminId: string): Promise<boolean> => {
     try {
       setQrCodeUrl(null)
       setFactorId(null)
-      setChallengeId(null)
 
-      const { data: factorsData } = await client.auth.mfa.listFactors()
+      const { data: factorsData, error: factorsError } = await client.auth.mfa.listFactors()
+      if (factorsError) throw factorsError
       const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified')
 
       if (verifiedTotp) {
-        const { data: challengeData, error: challengeErr } = await client.auth.mfa.challenge({
-          factorId: verifiedTotp.id,
-        })
-        if (!challengeErr && challengeData) {
-          setFactorId(verifiedTotp.id)
-          setChallengeId(challengeData.id)
-        }
-        return
+        setFactorId(verifiedTotp.id)
+        return true
       }
 
       const { data: enrollData, error: enrollErr } = await client.auth.mfa.enroll({
@@ -61,11 +54,14 @@ export default function AdminLoginPage() {
           : `data:image/svg+xml;utf-8,${encodeURIComponent(qrRaw)}`
         setQrCodeUrl(qrUri)
         setFactorId(enrollData.id)
+        return true
       } else if (enrollErr) {
         throw enrollErr
       }
+      throw new Error('Could not prepare authenticator 2FA.')
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Could not prepare authenticator 2FA.')
+      return false
     }
   }
 
@@ -86,19 +82,20 @@ export default function AdminLoginPage() {
 
     try {
       const supabase = createSupabaseClient()
-      let activeChallengeId = challengeId
-
-      if (!activeChallengeId) {
-        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-          factorId,
-        })
-        if (challengeError) throw challengeError
-        activeChallengeId = challengeData.id
+      const { data: authData, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
+      if (authData.user?.id !== userId) {
+        throw new Error('Your sign-in session changed. Please sign in again.')
       }
+
+      const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+        factorId,
+      })
+      if (challengeError) throw challengeError
 
       const { error: verifyError } = await supabase.auth.mfa.verify({
         factorId,
-        challengeId: activeChallengeId,
+        challengeId: challengeData.id,
         code,
       })
       if (verifyError) throw verifyError
@@ -165,7 +162,8 @@ export default function AdminLoginPage() {
         return
       }
 
-      await prepare2FA(supabase, email.trim(), signInData.user.id)
+      const isPrepared = await prepare2FA(supabase, email.trim(), signInData.user.id)
+      if (!isPrepared) return
       setUserId(signInData.user.id)
       setAwaiting2FA(true)
       setIsLoading(false)

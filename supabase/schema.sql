@@ -1228,7 +1228,7 @@ begin
     count(a.id) filter (where a.payment_status = 'paid')::bigint,
     coalesce(sum(a.deposit_paid_kobo) filter (where a.payment_status = 'paid'), 0)::bigint
   from generate_series(current_date - 13, current_date, interval '1 day') as days(activity_date)
-  left join public.appointments a on a.appointment_date = days.activity_date::date
+  left join public.appointments a on a.created_at::date = days.activity_date::date
   group by days.activity_date
   order by days.activity_date;
 end;

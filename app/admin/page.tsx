@@ -109,16 +109,32 @@ export default function AdminOverviewPage() {
 
   useEffect(() => {
     let active = true
+    const supabase = createSupabaseClient()
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let channelGeneration = 0
+    let reconnectTimer: number | undefined
+    let stableTimer: number | undefined
+    let refreshTimer: number | undefined
+    let pollingTimer: number | undefined
+    let reconnectAttempts = 0
+    let isLoadingOverview = false
+    let refreshQueued = false
 
-    const loadOverview = async () => {
-      setIsLoading(true)
-      setErrorMessage('')
+    const loadOverview = async (showLoading = false) => {
+      if (isLoadingOverview) {
+        refreshQueued = true
+        return
+      }
+      isLoadingOverview = true
+      if (showLoading) {
+        setIsLoading(true)
+        setErrorMessage('')
+      }
 
       try {
         const since = range === 'all'
           ? null
           : new Date(Date.now() - Number(range) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-        const supabase = createSupabaseClient()
         const [statsResult, activityResult, studiosResult, bookingsResult] = await Promise.all([
           supabase.rpc('admin_overview_stats', { p_since: since }),
           supabase.rpc('admin_daily_activity'),
@@ -134,18 +150,104 @@ export default function AdminOverviewPage() {
         setDailyActivity((activityResult.data ?? []) as DailyActivity[])
         setStudios((studiosResult.data ?? []) as StudioSummary[])
         setRecentBookings((bookingsResult.data ?? []) as RecentBooking[])
+        setErrorMessage('')
       } catch (error) {
         if (active) {
           setErrorMessage(error instanceof Error ? error.message : 'Could not load admin overview.')
         }
       } finally {
-        if (active) setIsLoading(false)
+        isLoadingOverview = false
+        if (active && showLoading) setIsLoading(false)
+        if (active && refreshQueued) {
+          refreshQueued = false
+          void loadOverview()
+        }
       }
     }
 
-    void loadOverview()
+    const scheduleOverviewRefresh = () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        void loadOverview()
+      }, 250)
+    }
+
+    const startPolling = () => {
+      if (pollingTimer !== undefined) return
+      pollingTimer = window.setInterval(() => void loadOverview(), 30_000)
+    }
+
+    const stopPolling = () => {
+      if (pollingTimer === undefined) return
+      window.clearInterval(pollingTimer)
+      pollingTimer = undefined
+    }
+
+    const scheduleReconnect = (status: string, error: Error | undefined) => {
+      if (!active || reconnectTimer !== undefined) return
+      console.warn(`Admin overview subscription status: ${status}`, error)
+      startPolling()
+      void loadOverview()
+
+      const delay = Math.min(1_000 * 2 ** reconnectAttempts, 30_000)
+      reconnectAttempts += 1
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined
+        if (!active) return
+        const previousChannel = channel
+        channel = null
+        channelGeneration += 1
+        if (previousChannel) void supabase.removeChannel(previousChannel)
+        connectRealtime()
+      }, delay)
+    }
+
+    const connectRealtime = () => {
+      if (!active) return
+      const generation = ++channelGeneration
+      channel = supabase
+        .channel(`admin-overview-booking-payments-${crypto.randomUUID()}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'admin_notifications',
+            filter: 'event_type=eq.booking_payment',
+          },
+          scheduleOverviewRefresh
+        )
+        .subscribe((status, error) => {
+          if (!active || generation !== channelGeneration) return
+          if (status === 'SUBSCRIBED') {
+            stopPolling()
+            scheduleOverviewRefresh()
+            if (stableTimer !== undefined) window.clearTimeout(stableTimer)
+            stableTimer = window.setTimeout(() => {
+              reconnectAttempts = 0
+              stableTimer = undefined
+            }, 30_000)
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            if (stableTimer !== undefined) {
+              window.clearTimeout(stableTimer)
+              stableTimer = undefined
+            }
+            scheduleReconnect(status, error)
+          }
+        })
+    }
+
+    void loadOverview(true)
+    connectRealtime()
     return () => {
       active = false
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      if (stableTimer !== undefined) window.clearTimeout(stableTimer)
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      stopPolling()
+      channelGeneration += 1
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [range])
 

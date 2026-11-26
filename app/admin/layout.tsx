@@ -227,7 +227,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   ]
 
   return (
-    <div className="flex min-h-screen bg-[#faf8f5] text-[#1e1c1a]">
+    <div className="flex min-h-dvh bg-[#faf8f5] text-[#1e1c1a]">
       {mobileNavOpen && (
         <button
           type="button"
@@ -239,7 +239,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* ========================================================================= */}
       {/* PERSISTENT FOREST DARK SIDEBAR                                            */}
       {/* ========================================================================= */}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex h-screen w-64 shrink-0 flex-col justify-between overflow-y-auto border-r border-[#203027] bg-[#141f19] p-5 text-[#f8f5f0] transition-transform md:sticky md:top-0 md:translate-x-0 ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex h-dvh w-64 shrink-0 flex-col justify-between overflow-y-auto border-r border-[#203027] bg-[#141f19] p-5 text-[#f8f5f0] transition-transform md:sticky md:top-0 md:bottom-auto md:h-auto md:min-h-dvh md:self-stretch md:translate-x-0 ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div>
           {/* Logo & Category */}
           <div className="flex items-center justify-between pb-6 border-b border-white/10">
@@ -329,7 +329,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* ========================================================================= */}
       {/* MAIN VIEWPORT                                                             */}
       {/* ========================================================================= */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#faf8f5]">
+      <div className="flex min-h-dvh min-w-0 flex-1 flex-col bg-[#faf8f5]">
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-[#ded8cf]/60 bg-[#faf8f5]/95 px-4 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <button
