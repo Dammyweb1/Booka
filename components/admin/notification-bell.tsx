@@ -25,65 +25,136 @@ export function AdminNotificationBell() {
     let active = true
     const supabase = createSupabaseClient()
     const unlockAudio = () => unlockBeepSound()
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let channelGeneration = 0
+    let reconnectTimer: number | undefined
+    let stableTimer: number | undefined
+    let pollingTimer: number | undefined
+    let reconnectAttempts = 0
+    let notificationLoadFailed = false
+    let isLoadingNotifications = false
     document.addEventListener('pointerdown', unlockAudio, { once: true })
     document.addEventListener('keydown', unlockAudio, { once: true })
 
     const loadNotifications = async () => {
-      const { data, error } = await supabase
-        .from('admin_notifications')
-        .select('id, event_type, title, message, related_id, created_at, read_at')
-        .order('created_at', { ascending: false })
-        .limit(25)
+      if (isLoadingNotifications) return
+      isLoadingNotifications = true
+      try {
+        const { data, error } = await supabase
+          .from('admin_notifications')
+          .select('id, event_type, title, message, related_id, created_at, read_at')
+          .order('created_at', { ascending: false })
+          .limit(25)
 
-      if (error) {
-        console.error('Could not load admin notifications:', error.message)
-        if (active) setErrorMessage('Could not load notifications.')
-        return
-      }
+        if (error) {
+          notificationLoadFailed = true
+          console.error('Could not load admin notifications:', error.message)
+          if (active) setErrorMessage('Could not load notifications.')
+          return
+        }
 
-      if (active) {
-        const loaded = (data ?? []) as AdminNotification[]
-        setNotifications((current) => {
-          const byId = new Map<number, AdminNotification>()
-          for (const notification of loaded) byId.set(notification.id, notification)
-          for (const notification of current) byId.set(notification.id, notification)
-          return [...byId.values()]
-            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-            .slice(0, 25)
-        })
+        if (active) {
+          const loaded = (data ?? []) as AdminNotification[]
+          setNotifications((current) => {
+            const byId = new Map<number, AdminNotification>()
+            for (const notification of loaded) byId.set(notification.id, notification)
+            for (const notification of current) byId.set(notification.id, notification)
+            return [...byId.values()]
+              .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+              .slice(0, 25)
+          })
+          if (notificationLoadFailed) {
+            notificationLoadFailed = false
+            setErrorMessage((current) => current === 'Could not load notifications.' ? '' : current)
+          }
+        }
+      } finally {
+        isLoadingNotifications = false
       }
     }
 
-    void loadNotifications()
+    const startPolling = () => {
+      if (pollingTimer !== undefined) return
+      pollingTimer = window.setInterval(() => void loadNotifications(), 30_000)
+    }
 
-    const channel = supabase
-      .channel(`admin-backoffice-notifications-${crypto.randomUUID()}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'admin_notifications' },
-        (payload) => {
-          const notification = payload.new as AdminNotification
-          if (!active) return
-          setNotifications((current) => [
-            notification,
-            ...current.filter((item) => item.id !== notification.id),
-          ].slice(0, 25))
-          playBeepSound()
-        }
-      )
-      .subscribe((status, error) => {
+    const stopPolling = () => {
+      if (pollingTimer === undefined) return
+      window.clearInterval(pollingTimer)
+      pollingTimer = undefined
+    }
+
+    const scheduleReconnect = (status: string, error: Error | undefined) => {
+      if (reconnectTimer !== undefined) return
+      console.warn(`Admin notification subscription status: ${status}`, error)
+      setErrorMessage('Live updates are reconnecting. Notifications will refresh periodically.')
+      startPolling()
+      void loadNotifications()
+
+      const delay = Math.min(1_000 * 2 ** reconnectAttempts, 30_000)
+      reconnectAttempts += 1
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined
         if (!active) return
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.error(`Admin notification subscription status: ${status}`, error)
-          setErrorMessage('Live notifications are temporarily unavailable.')
-        }
-      })
+        const previousChannel = channel
+        channel = null
+        channelGeneration += 1
+        if (previousChannel) void supabase.removeChannel(previousChannel)
+        connectRealtime()
+      }, delay)
+    }
+
+    const connectRealtime = () => {
+      if (!active) return
+      const generation = ++channelGeneration
+      channel = supabase
+        .channel(`admin-backoffice-notifications-${crypto.randomUUID()}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'admin_notifications' },
+          (payload) => {
+            const notification = payload.new as AdminNotification
+            if (!active) return
+            setNotifications((current) => [
+              notification,
+              ...current.filter((item) => item.id !== notification.id),
+            ].slice(0, 25))
+            playBeepSound()
+          }
+        )
+        .subscribe((status, error) => {
+          if (!active || generation !== channelGeneration) return
+          if (status === 'SUBSCRIBED') {
+            setErrorMessage('')
+            stopPolling()
+            void loadNotifications()
+            if (stableTimer !== undefined) window.clearTimeout(stableTimer)
+            stableTimer = window.setTimeout(() => {
+              reconnectAttempts = 0
+              stableTimer = undefined
+            }, 30_000)
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            if (stableTimer !== undefined) {
+              window.clearTimeout(stableTimer)
+              stableTimer = undefined
+            }
+            scheduleReconnect(status, error)
+          }
+        })
+    }
+
+    void loadNotifications()
+    connectRealtime()
 
     return () => {
       active = false
       document.removeEventListener('pointerdown', unlockAudio)
       document.removeEventListener('keydown', unlockAudio)
-      void supabase.removeChannel(channel)
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      if (stableTimer !== undefined) window.clearTimeout(stableTimer)
+      stopPolling()
+      channelGeneration += 1
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [])
 

@@ -772,13 +772,13 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => openMobileTab(label)}
                       className={cn(
-                        'flex items-center justify-between rounded-xl px-3 py-3 text-xs transition',
+                        'flex items-center justify-between rounded-r-xl border-l-2 border-transparent px-3 py-3 text-[13px] transition-colors',
                         activeTab === label
-                          ? 'bg-[#f3efe9] font-semibold text-[#211f1c]'
-                          : 'text-white/65 hover:bg-white/10 hover:text-white'
+                          ? 'border-[#d46b4f] font-semibold text-white'
+                          : 'text-white/65 hover:text-white'
                       )}
                     >
-                      <span className="flex items-center gap-3">
+                      <span className="flex items-center gap-3 text-[13px]">
                         <Icon size={17} />
                         {label}
                       </span>
@@ -848,13 +848,13 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setActiveTab(label)}
                   className={cn(
-                    'flex items-center justify-between rounded-xl px-3 py-3 text-xs transition',
+                    'flex items-center justify-between rounded-r-xl border-l-2 border-transparent px-3 py-3 text-[13px] transition-colors',
                     activeTab === label
-                      ? 'bg-[#f3efe9] font-semibold text-[#211f1c]'
-                      : 'text-white/55 hover:bg-white/10 hover:text-white'
+                      ? 'border-[#d46b4f] font-semibold text-white'
+                      : 'text-white/55 hover:text-white'
                   )}
                 >
-                  <span className="flex items-center gap-3">
+                  <span className="flex items-center gap-3 text-[13px]">
                     <Icon size={17} />
                     {label}
                   </span>
@@ -907,8 +907,7 @@ export default function DashboardPage() {
 
       {/* Main Workspace Area */}
       <main className="min-w-0 flex-1 flex flex-col">
-        {/* TOP HEADER SECTION: FULL-WIDTH, MATCHES SIDEBAR BG (#211f1c), PX-8 */}
-        <header className="flex w-full items-center justify-between border-b border-white/10 bg-[#211f1c] px-4 py-4 text-white sm:px-8">
+        <header className="flex w-full items-center justify-between border-b border-[#e5ddd4] px-4 py-4 text-[#211f1c] sm:px-8">
           <div className="flex items-center gap-3">
             {businessSettings.logoUrl ? (
               <button
@@ -920,15 +919,15 @@ export default function DashboardPage() {
                 <img
                   src={businessSettings.logoUrl}
                   alt={businessSettings.businessName}
-                  className="h-9 sm:h-10 max-w-[120px] sm:max-w-[160px] object-contain rounded-lg bg-white/5 p-1 border border-white/10"
+                  className="h-9 sm:h-10 max-w-[120px] sm:max-w-[160px] object-contain rounded-lg bg-white p-1 border border-[#ded8cf]"
                 />
-                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-white inline truncate max-w-[130px] sm:max-w-none">
+                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-[#211f1c] inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-white/90 inline truncate max-w-[130px] sm:max-w-none">
+                <span className="text-base sm:text-sm font-semibold tracking-[-0.02em] text-[#211f1c] inline truncate max-w-[130px] sm:max-w-none">
                   {businessSettings.businessName}
                 </span>
               </div>
@@ -943,7 +942,7 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() => setShareOpen(!shareOpen)}
                 className={cn(
-                  'relative grid size-10 place-items-center rounded-full bg-white/10 text-white transition-all hover:bg-white/20',
+                  'relative grid size-10 place-items-center rounded-full bg-black/5 text-[#211f1c] transition-all hover:bg-black/10',
                   shareOpen && 'bg-[#d46b4f] text-white hover:bg-[#d46b4f]'
                 )}
                 aria-label="Share booking page"
@@ -1077,7 +1076,7 @@ export default function DashboardPage() {
               }}
               aria-label="Open navigation menu"
               aria-expanded={mobileMenuOpen}
-              className="grid size-10 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 lg:hidden"
+              className="grid size-10 place-items-center rounded-full bg-black/5 text-[#211f1c] transition hover:bg-black/10 lg:hidden"
             >
               <Menu size={19} />
             </button>
@@ -1093,7 +1092,7 @@ export default function DashboardPage() {
                 persistNotifications(readList)
               }}
               className={cn(
-                'relative grid size-10 place-items-center rounded-full bg-white/10 text-white transition-all',
+                'relative grid size-10 place-items-center rounded-full bg-black/5 text-[#211f1c] transition-all',
                 isBeeping
                   ? 'bg-[#d46b4f] scale-110 shadow-[0_0_20px_rgba(212,107,79,0.8)] animate-bounce'
                   : 'hover:bg-white/20'
@@ -1102,7 +1101,7 @@ export default function DashboardPage() {
             >
               <Bell size={18} className={isBeeping ? 'animate-wiggle' : ''} />
               {unreadNotifsCount > 0 && (
-                <span className="absolute right-2 top-2 size-2 rounded-full bg-[#d46b4f] ring-2 ring-[#211f1c] animate-pulse" />
+                <span className="absolute right-2 top-2 size-2 rounded-full bg-[#d46b4f] ring-2 ring-[#f3efe9] animate-pulse" />
               )}
             </button>
 

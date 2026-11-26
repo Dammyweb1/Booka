@@ -89,6 +89,13 @@ const formatNaira = (amount: number) => new Intl.NumberFormat('en-NG', {
   maximumFractionDigits: 0,
 }).format(amount)
 
+const verificationStatusLabels: Record<Studio['verificationStatus'], string> = {
+  pending: 'Pending verification',
+  under_review: 'Under review',
+  verified: 'Verified',
+  rejected: 'Rejected',
+}
+
 export default function AdminStudiosPage() {
   const [studios, setStudios] = useState<Studio[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -108,6 +115,7 @@ export default function AdminStudiosPage() {
   const [lifecycleReason, setLifecycleReason] = useState('')
   const [verificationStatus, setVerificationStatus] = useState<Studio['verificationStatus']>('pending')
   const [verificationNote, setVerificationNote] = useState('')
+  const [verificationSaved, setVerificationSaved] = useState(false)
   const [actionError, setActionError] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
@@ -176,6 +184,7 @@ export default function AdminStudiosPage() {
     setLifecycleReason(studio.suspensionReason)
     setVerificationStatus(studio.verificationStatus)
     setVerificationNote(studio.verificationNote)
+    setVerificationSaved(false)
     setSaveError('')
     setSaveSuccess(false)
     setActionError('')
@@ -222,6 +231,7 @@ export default function AdminStudiosPage() {
     if (!selectedStudio) return
     setActionLoading(true)
     setActionError('')
+    setVerificationSaved(false)
     try {
       const supabase = createSupabaseClient()
       const { error } = await supabase.rpc('admin_set_studio_verification', {
@@ -237,6 +247,7 @@ export default function AdminStudiosPage() {
       }
       setSelectedStudio(updated)
       setStudios((current) => current.map((studio) => studio.id === updated.id ? updated : studio))
+      setVerificationSaved(true)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Could not update verification status.')
     } finally {
@@ -505,17 +516,28 @@ export default function AdminStudiosPage() {
                     </td>
 
                     <td className="py-4">
-                      {studio.status === 'Ready' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#edf5ef] text-[#528361]">
-                          <span className="size-1.5 rounded-full bg-[#528361]" />
-                          <span>Ready</span>
+                      <div className="flex flex-col items-start gap-1.5">
+                        {studio.status === 'Ready' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#edf5ef] text-[#528361]">
+                            <span className="size-1.5 rounded-full bg-[#528361]" />
+                            <span>Ready</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#fcf5e8] text-[#c0822e]">
+                            <span className="size-1.5 rounded-full bg-[#c0822e]" />
+                            <span>Action needed</span>
+                          </span>
+                        )}
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                          studio.verificationStatus === 'verified'
+                            ? 'bg-[#edf5ef] text-[#528361]'
+                            : studio.verificationStatus === 'rejected'
+                              ? 'bg-[#fceeee] text-[#b54747]'
+                              : 'bg-[#f4f0e9] text-[#756f69]'
+                        }`}>
+                          {verificationStatusLabels[studio.verificationStatus]}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#fcf5e8] text-[#c0822e]">
-                          <span className="size-1.5 rounded-full bg-[#c0822e]" />
-                          <span>Action needed</span>
-                        </span>
-                      )}
+                      </div>
                     </td>
 
                     <td className="py-4 text-right">
@@ -745,7 +767,10 @@ export default function AdminStudiosPage() {
                     Verification status
                     <select
                       value={verificationStatus}
-                      onChange={(event) => setVerificationStatus(event.target.value as Studio['verificationStatus'])}
+                      onChange={(event) => {
+                        setVerificationStatus(event.target.value as Studio['verificationStatus'])
+                        setVerificationSaved(false)
+                      }}
                       className="mt-2 h-9 w-full rounded-lg border border-[#ded8cf] bg-white px-3 text-xs"
                     >
                       <option value="pending">Pending</option>
@@ -758,18 +783,26 @@ export default function AdminStudiosPage() {
                     Admin verification note
                     <textarea
                       value={verificationNote}
-                      onChange={(event) => setVerificationNote(event.target.value)}
+                      onChange={(event) => {
+                        setVerificationNote(event.target.value)
+                        setVerificationSaved(false)
+                      }}
                       rows={2}
                       className="mt-2 w-full resize-none rounded-lg border border-[#ded8cf] px-3 py-2 text-xs outline-none focus:border-[#c0593c]"
                     />
                   </label>
+                  {verificationSaved && (
+                    <p role="status" aria-live="polite" className="mt-3 rounded-lg bg-green-50 p-3 text-xs text-green-800">
+                      Verification status saved.
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleVerificationAction()}
                     disabled={actionLoading}
                     className="mt-3 rounded-lg bg-[#1e1c1a] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    Save verification
+                    {actionLoading ? 'Saving...' : 'Save verification'}
                   </button>
                 </div>
               </div>
