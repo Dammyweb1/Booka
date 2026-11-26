@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Bell } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 import { playBeepSound, unlockBeepSound } from '@/lib/sound'
 
 interface AdminNotification {

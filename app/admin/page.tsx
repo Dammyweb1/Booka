@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowUpRight, Calendar, TrendingUp } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 type Range = '30' | '90' | 'all'
 

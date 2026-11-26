@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface Studio {
   id: string

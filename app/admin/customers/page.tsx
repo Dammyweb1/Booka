@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Search, ShieldAlert, ShieldCheck } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface CustomerRecord {
   client_id: string

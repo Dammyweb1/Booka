@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface AdminUser {
   admin_id: string

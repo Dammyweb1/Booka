@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Download } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface PayoutRecord {
   payout_id: number

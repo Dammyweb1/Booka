@@ -13,7 +13,8 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { Logo } from '@/components/brand/logo'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
+import { clearAdminSessionActivity } from '@/lib/admin-session'
 
 type Step = 'request' | 'verify' | 'success'
 
@@ -88,6 +89,7 @@ export default function AdminResetPasswordPage() {
       if (updateError) throw updateError
 
       const { error: signOutError } = await supabase.auth.signOut()
+      clearAdminSessionActivity()
       if (signOutError) {
         setSignOutWarning('Your password was updated, but this recovery session could not be ended automatically. Sign in again from the admin login page.')
       }

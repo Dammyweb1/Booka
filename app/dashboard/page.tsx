@@ -772,7 +772,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => openMobileTab(label)}
                       className={cn(
-                        'flex items-center justify-between rounded-xl px-3 py-3 text-sm transition',
+                        'flex items-center justify-between rounded-xl px-3 py-3 text-xs transition',
                         activeTab === label
                           ? 'bg-[#f3efe9] font-semibold text-[#211f1c]'
                           : 'text-white/65 hover:bg-white/10 hover:text-white'
@@ -848,7 +848,7 @@ export default function DashboardPage() {
                   type="button"
                   onClick={() => setActiveTab(label)}
                   className={cn(
-                    'flex items-center justify-between rounded-xl px-3 py-3 text-sm transition',
+                    'flex items-center justify-between rounded-xl px-3 py-3 text-xs transition',
                     activeTab === label
                       ? 'bg-[#f3efe9] font-semibold text-[#211f1c]'
                       : 'text-white/55 hover:bg-white/10 hover:text-white'

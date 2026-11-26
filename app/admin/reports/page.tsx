@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import { Download, FileBarChart } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface FinancialReport {
   report_id: number

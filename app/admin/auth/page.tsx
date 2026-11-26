@@ -5,14 +5,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, Lock, Mail, ShieldCheck, ArrowRight, QrCode } from 'lucide-react'
 import { Logo } from '@/components/brand/logo'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
+import { markAdminSessionActivity } from '@/lib/admin-session'
 
 export default function AdminLoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [keepSignedIn, setKeepSignedIn] = useState(true)
 
   // 2FA / TOTP states
   const [twoFactorCode, setTwoFactorCode] = useState<string[]>([])
@@ -22,6 +22,7 @@ export default function AdminLoginPage() {
   const [factorId, setFactorId] = useState<string | null>(null)
   const [challengeId, setChallengeId] = useState<string | null>(null)
   const codeInputs = useRef<Array<HTMLInputElement | null>>([])
+  const isVerifying2FA = useRef(false)
 
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -68,57 +69,60 @@ export default function AdminLoginPage() {
     }
   }
 
+  const verifyTwoFactorCode = async (code: string) => {
+    if (isVerifying2FA.current) return
+    if (!/^\d{6}$/.test(code)) {
+      setErrorMessage('Please enter the 6-digit verification code.')
+      return
+    }
+    if (!userId || !factorId) {
+      setErrorMessage('Authenticator verification is not ready. Return to sign in and try again.')
+      return
+    }
+
+    isVerifying2FA.current = true
+    setIsLoading(true)
+    setErrorMessage('')
+
+    try {
+      const supabase = createSupabaseClient()
+      let activeChallengeId = challengeId
+
+      if (!activeChallengeId) {
+        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+          factorId,
+        })
+        if (challengeError) throw challengeError
+        activeChallengeId = challengeData.id
+      }
+
+      const { error: verifyError } = await supabase.auth.mfa.verify({
+        factorId,
+        challengeId: activeChallengeId,
+        code,
+      })
+      if (verifyError) throw verifyError
+
+      const { error: lastSeenError } = await supabase.rpc('admin_mark_last_seen')
+      if (lastSeenError) throw lastSeenError
+      markAdminSessionActivity()
+      router.replace('/admin')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Invalid 2FA code. Please check your authenticator app.')
+      setTwoFactorCode([])
+      codeInputs.current[0]?.focus()
+    } finally {
+      isVerifying2FA.current = false
+      setIsLoading(false)
+    }
+  }
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
 
     // Handle 2FA verification step
     if (awaiting2FA && userId) {
-      const code = twoFactorCode.join('')
-      if (code.length !== 6) {
-        setErrorMessage('Please enter the 6-digit verification code.')
-        return
-      }
-      setIsLoading(true)
-      setErrorMessage('')
-      try {
-        const supabase = createSupabaseClient()
-
-        if (factorId && challengeId) {
-          // Verify with active challenge
-          const { error: verifyErr } = await supabase.auth.mfa.verify({
-            factorId,
-            challengeId,
-            code,
-          })
-          if (verifyErr) throw verifyErr
-        } else if (factorId) {
-          // Create challenge and verify
-          const { data: challengeData, error: challengeErr } = await supabase.auth.mfa.challenge({
-            factorId,
-          })
-          if (challengeErr) throw challengeErr
-
-          const { error: verifyErr } = await supabase.auth.mfa.verify({
-            factorId,
-            challengeId: challengeData.id,
-            code,
-          })
-          if (verifyErr) throw verifyErr
-        } else {
-          // Validate 6 digits
-          if (!/^\d{6}$/.test(code)) {
-            throw new Error('Please enter the 6-digit code shown in your authenticator app.')
-          }
-        }
-
-        const { error: lastSeenError } = await supabase.rpc('admin_mark_last_seen')
-        if (lastSeenError) throw lastSeenError
-        router.replace('/admin')
-      } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : 'Invalid 2FA code. Please check your authenticator app.')
-        setIsLoading(false)
-        return
-      }
+      await verifyTwoFactorCode(twoFactorCode.join(''))
       return
     }
 
@@ -156,6 +160,7 @@ export default function AdminLoginPage() {
       if (!adminRecord.requires_2fa) {
         const { error: lastSeenError } = await supabase.rpc('admin_mark_last_seen')
         if (lastSeenError) throw lastSeenError
+        markAdminSessionActivity()
         router.replace('/admin')
         return
       }
@@ -285,7 +290,10 @@ export default function AdminLoginPage() {
                         const digits = [...twoFactorCode]
                         digits[index] = digit
                         setTwoFactorCode(digits)
+                        setErrorMessage('')
                         if (digit && index < 5) codeInputs.current[index + 1]?.focus()
+                        const code = digits.join('')
+                        if (/^\d{6}$/.test(code)) void verifyTwoFactorCode(code)
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Backspace' && !twoFactorCode[index] && index > 0) {
@@ -296,8 +304,13 @@ export default function AdminLoginPage() {
                         e.preventDefault()
                         const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
                         if (!digits) return
-                        setTwoFactorCode(digits.split(''))
-                        codeInputs.current[Math.min(digits.length, 5)]?.focus()
+                        setTwoFactorCode(Array.from({ length: 6 }, (_, index) => digits[index] ?? ''))
+                        setErrorMessage('')
+                        if (digits.length === 6) {
+                          void verifyTwoFactorCode(digits)
+                        } else {
+                          codeInputs.current[Math.min(digits.length, 5)]?.focus()
+                        }
                       }}
                       aria-label={`Digit ${index + 1}`}
                       className="w-[52px] h-14 rounded-xl border border-[#ded8cf] bg-white text-center text-xl font-mono text-[#1e1c1a] focus:outline-none focus:border-[#c0593c] focus:ring-1 focus:ring-[#c0593c]"
@@ -393,18 +406,9 @@ export default function AdminLoginPage() {
                   </div>
                 </div>
 
-                {/* Checkbox */}
-                <div className="pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-[#756f69]">
-                    <input
-                      type="checkbox"
-                      checked={keepSignedIn}
-                      onChange={(e) => setKeepSignedIn(e.target.checked)}
-                      className="rounded border-[#ded8cf] text-[#c0593c] focus:ring-[#c0593c]"
-                    />
-                    <span>Keep me signed in</span>
-                  </label>
-                </div>
+                <p className="pt-1 text-xs text-[#756f69]">
+                  Sign-in ends when this browser session closes or after 3 hours of inactivity.
+                </p>
 
                 {/* Submit Button */}
                 <button

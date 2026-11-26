@@ -9,14 +9,68 @@ declare global {
   }
 }
 
-declare const self: ServiceWorkerGlobalScope
+type ActivationEvent = {
+  waitUntil: (promise: Promise<unknown>) => void
+}
+
+declare const self: WorkerGlobalScope & {
+  addEventListener: (
+    type: 'activate',
+    listener: (event: ActivationEvent) => void
+  ) => void
+}
+
+const cacheableAssetNames = new Set([
+  'google-fonts-webfonts',
+  'google-fonts-stylesheets',
+  'static-font-assets',
+  'static-image-assets',
+  'next-static-js-assets',
+  'next-image',
+  'static-audio-assets',
+  'static-video-assets',
+  'static-js-assets',
+  'static-style-assets',
+])
+
+const runtimeCaching = defaultCache.filter(({ handler }) =>
+  typeof handler === 'object' &&
+  handler !== null &&
+  'cacheName' in handler &&
+  typeof handler.cacheName === 'string' &&
+  cacheableAssetNames.has(handler.cacheName)
+)
+
+const privatePageCaches = new Set([
+  'pages',
+  'pages-rsc',
+  'pages-rsc-prefetch',
+  'next-data',
+  'static-data-assets',
+  'apis',
+  'others',
+  'cross-origin',
+])
+
+// Remove page/API responses cached by older workers so another account cannot see them.
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) =>
+      Promise.all(
+        cacheNames
+          .filter((cacheName) => privatePageCaches.has(cacheName))
+          .map((cacheName) => caches.delete(cacheName))
+      )
+    )
+  )
+})
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  runtimeCaching: defaultCache,
+  runtimeCaching,
 })
 
 serwist.addEventListeners()

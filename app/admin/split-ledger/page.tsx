@@ -6,7 +6,7 @@ import {
   HelpCircle,
   Search,
 } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 interface BookingRecord {
   booking_id: string

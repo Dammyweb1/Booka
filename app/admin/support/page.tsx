@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
 
 type TicketStatus = 'open' | 'in_progress' | 'waiting' | 'resolved' | 'closed'
 type TicketPriority = 'low' | 'normal' | 'high' | 'urgent'

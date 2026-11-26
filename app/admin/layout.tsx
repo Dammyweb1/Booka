@@ -23,7 +23,12 @@ import {
   ChartNoAxesCombined,
   Activity,
 } from 'lucide-react'
-import { createSupabaseClient } from '@/lib/supabase'
+import { createAdminSupabaseClient as createSupabaseClient } from '@/lib/supabase'
+import {
+  clearAdminSessionActivity,
+  getAdminSessionIdleTimeRemaining,
+  markAdminSessionActivity,
+} from '@/lib/admin-session'
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -33,22 +38,63 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [adminEmail, setAdminEmail] = useState('Admin')
   const [adminRole, setAdminRole] = useState('superadmin')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [verificationError, setVerificationError] = useState('')
 
   // Pages that don't need the admin sidebar
   const isPublicAdminAuthPage = pathname === '/admin/auth' || pathname === '/admin/reset-password'
 
   useEffect(() => {
+    let active = true
+    let isSigningOut = false
+    let idleTimer: number | undefined
+    const supabase = createSupabaseClient()
+
+    const signOutForIdleTimeout = async () => {
+      if (!active || isSigningOut) return
+      isSigningOut = true
+      try {
+        const { error } = await supabase.auth.signOut()
+        if (error) console.error('Admin idle-timeout sign-out failed:', error.message)
+      } catch (error) {
+        console.error('Admin idle-timeout sign-out failed:', error)
+      } finally {
+        clearAdminSessionActivity()
+        if (active) router.replace('/admin/auth')
+      }
+    }
+
+    const scheduleIdleTimeout = () => {
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer)
+      idleTimer = window.setTimeout(
+        () => void signOutForIdleTimeout(),
+        getAdminSessionIdleTimeRemaining()
+      )
+    }
+
+    const recordActivity = () => {
+      if (!active || isSigningOut) return
+      markAdminSessionActivity()
+      scheduleIdleTimeout()
+    }
+
     if (isPublicAdminAuthPage) {
       setIsLoading(false)
-      return
+      return () => {
+        active = false
+      }
     }
 
     const verifyAdminClearance = async () => {
       try {
-        const supabase = createSupabaseClient()
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        if (getAdminSessionIdleTimeRemaining() <= 0) {
+          await signOutForIdleTimeout()
+          return
+        }
 
-        if (authError || !user) {
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        if (authError) throw authError
+        if (!user) {
+          clearAdminSessionActivity()
           router.replace('/admin/auth')
           return
         }
@@ -60,33 +106,54 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           .from('platform_admins')
           .select('role, is_active, requires_2fa')
           .eq('id', user.id)
-          .single()
+          .maybeSingle()
 
-        if (adminError || !adminRecord?.is_active || !adminRecord?.role || ![
+        if (adminError) throw adminError
+        if (!adminRecord?.is_active || !adminRecord?.role || ![
           'superadmin', 'finance', 'operations', 'support', 'auditor',
         ].includes(adminRecord.role)) {
+          const { error } = await supabase.auth.signOut()
+          if (error) console.error('Inactive admin sign-out failed:', error.message)
+          clearAdminSessionActivity()
           router.replace('/admin/auth')
           return
         }
 
         if (adminRecord.requires_2fa) {
           const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-          if (assuranceError || assurance.currentLevel !== 'aal2') {
+          if (assuranceError) throw assuranceError
+          if (assurance.currentLevel !== 'aal2') {
             router.replace('/admin/auth')
             return
           }
         }
 
+        markAdminSessionActivity()
+        scheduleIdleTimeout()
+        window.addEventListener('pointerdown', recordActivity, { passive: true })
+        window.addEventListener('keydown', recordActivity)
+        window.addEventListener('scroll', recordActivity, { passive: true })
         setAdminRole(adminRecord.role)
         setIsAuthorized(true)
-      } catch {
-        router.replace('/admin/auth')
+        setVerificationError('')
+      } catch (error) {
+        console.error('Admin clearance verification failed:', error)
+        if (active) {
+          setVerificationError('Could not verify admin access right now. Your session has not been signed out. Retry verification.')
+        }
       } finally {
-        setIsLoading(false)
+        if (active) setIsLoading(false)
       }
     }
 
-    verifyAdminClearance()
+    void verifyAdminClearance()
+    return () => {
+      active = false
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer)
+      window.removeEventListener('pointerdown', recordActivity)
+      window.removeEventListener('keydown', recordActivity)
+      window.removeEventListener('scroll', recordActivity)
+    }
   }, [pathname, isPublicAdminAuthPage, router])
 
   if (isPublicAdminAuthPage) {
@@ -107,12 +174,31 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   if (!isAuthorized) {
+    if (verificationError) {
+      return (
+        <main className="grid min-h-screen place-items-center bg-[#141f19] px-6 text-center text-white">
+          <div className="max-w-md">
+            <h1 className="text-xl font-semibold">Admin verification unavailable</h1>
+            <p role="alert" className="mt-3 text-sm text-[#f0b4a5]">{verificationError}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-5 rounded-full bg-[#528361] px-5 py-3 text-sm font-semibold text-white"
+            >
+              Retry verification
+            </button>
+          </div>
+        </main>
+      )
+    }
     return null
   }
 
   const handleSignOut = async () => {
     const supabase = createSupabaseClient()
-    await supabase.auth.signOut()
+    const { error } = await supabase.auth.signOut()
+    if (error) console.error('Admin sign-out failed:', error.message)
+    clearAdminSessionActivity()
     router.replace('/admin/auth')
   }
 
